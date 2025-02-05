@@ -20,7 +20,13 @@ class Database():
     :param key: int             #Index of table key in columns
     """
     def create_table(self, name, num_columns, key_index):
+
+        for table in self.tables:
+            if table.name == name:
+                return "Table already exists"
+                
         table = Table(name, num_columns, key_index)
+        self.tables.append(table)
         return table
 
     
