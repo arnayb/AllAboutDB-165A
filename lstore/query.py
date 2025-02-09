@@ -21,6 +21,7 @@ class Query:
     # Return False if record doesn't exist or is locked due to 2PL
     """
     def delete(self, primary_key):
+        
         pass
     
     
@@ -30,8 +31,24 @@ class Query:
     # Returns False if insert fails for whatever reason
     """
     def insert(self, *columns):
-        schema_encoding = '0' * self.table.num_columns
-        pass
+
+        if isinstance(columns[0], (list, tuple)):
+            rows = columns 
+        else:
+            rows = [columns] #so can be parsed in forloop if only1
+        for row in rows:
+            rid = self.table.rid_counter
+            self.table.rid_counter += 1
+
+            # Schema encoding (all '0' for new base record)
+            schema_encoding = '0' * self.table.num_columns
+            #assume length always good
+            for col_index, col_value in enumerate(row):
+                self.table.base_pages[col_index].append(col_value)
+            self.table.base_pages[self.table.num_columns].append(-1) #-1 means no indirection column yet
+            self.table.page_directory[rid] = len(self.table.base_pages[0]) - 1  # Position in Base Page
+        print(f"table now: {self.table.base_pages}")
+        return True
 
     
     """
@@ -67,7 +84,25 @@ class Query:
     # Returns False if no records exist with given key or if the target record cannot be accessed due to 2PL locking
     """
     def update(self, primary_key, *columns):
-        pass
+        p_key_col = self.table.base_pages[self.table.key]
+        record_index = -1
+        for x in range(0, len(p_key_col)):
+            if p_key_col[x] == primary_key:
+                record_index = x
+                break
+
+        if record_index == -1:
+            return False  
+
+        #assume columns len == len num_columns
+        for col_index in range(self.table.num_columns):
+            self.table.tail_pages[col_index].append(columns[col_index])
+
+        #set indirection column to point to last position in tailpage
+        self.table.base_pages[self.table.num_columns][record_index] = len(self.table.tail_pages[0]) - 1  
+        print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
+        return True 
+
 
     
     """

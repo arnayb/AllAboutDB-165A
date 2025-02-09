@@ -27,6 +27,9 @@ class Table:
         self.num_columns = num_columns
         self.page_directory = {}
         self.index = Index(self)
+        self.base_pages = [[] for _ in range(num_columns + 1)] # + 1 indirection column
+        self.tail_pages = [[] for _ in range(num_columns)]
+        self.rid_counter = 1
         pass
 
     def __merge(self):
