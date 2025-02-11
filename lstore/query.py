@@ -107,6 +107,9 @@ class Query:
 
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
+            if columns[col_index]==None:
+                self.table.tail_pages[col_index].append(self.table.base_pages[col_index])
+                continue
             self.table.tail_pages[col_index].append(columns[col_index])
         rid = self.table.base_pages[RID_COLUMN][record_index]
         print(f"rid is {rid}")
