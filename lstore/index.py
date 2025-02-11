@@ -72,7 +72,7 @@ class Index:
             return
         
         # Calculate load factor and resize if necessary
-        load = self.records_per_column[column] / self.num_buckets[column]
+        load = self.num_records[column] / self.num_buckets[column]
         if load > self.threshold:
             self._resize_hash(column)
 
@@ -137,7 +137,7 @@ class Index:
             self.hash_indices[column][bucket_num].append((i, value))
             self.num_records[column] += 1
             
-            self._check_resize(column)
+            self._check_and_resize(column)
             
         # Create B-tree index
         self.btree_indices[column] = OOBTree()
