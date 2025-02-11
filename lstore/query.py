@@ -8,8 +8,8 @@ from lstore.table import (
 )
 from lstore.index import Index
 
-BASE_RID = "BID"
-TAIL_RID = "TID"
+BASE_RID = 0
+TAIL_RID = 0
 RID_INT = 3
 
 class Query:
@@ -49,14 +49,15 @@ class Query:
         for row in rows:
             rid = BASE_RID + self.table.rid_counter
             self.table.rid_counter += 1
-
+            print(f"rid is {rid}")
             # Schema encoding (all '0' for new base record)
             self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
             # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
-            self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
-            self.table.page_directory[rid] = len(self.table.base_pages[0]) - 1  # Position in Base Page
+            self.table.base_pages[RID_COLUMN].append(rid) # point to itself first
+            self.table.page_directory[rid] = []
+            self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
         print(f"table now: {self.table.base_pages}")
         return True
 
@@ -106,10 +107,14 @@ class Query:
 
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
+            if columns[col_index]==None:
+                self.table.tail_pages[col_index].append(self.table.base_pages[col_index])
+                continue
             self.table.tail_pages[col_index].append(columns[col_index])
-
-        #set indirection column to point to last position in tailpage
-        self.table.base_pages[self.table.num_columns][record_index] = len(self.table.tail_pages[0]) - 1  
+        rid = self.table.base_pages[RID_COLUMN][record_index]
+        print(f"rid is {rid}")
+        self.table.tail_pages[RID_COLUMN].append(rid)
+        self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
         print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
         return True 
 
