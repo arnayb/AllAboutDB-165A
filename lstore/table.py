@@ -33,7 +33,7 @@ class Table:
           # schema encoding column
         self.base_pages = [[] for _ in range(num_columns + 4)]
         self.tail_pages = [[] for _ in range(num_columns + 4)]  
-        self.rid_counter = 1
+        self.rid_counter = 0
         pass
 
     def __merge(self):

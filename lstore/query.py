@@ -49,16 +49,14 @@ class Query:
         for row in rows:
             rid = BASE_RID + self.table.rid_counter
             self.table.rid_counter += 1
-            print(f"rid is {rid}")
             # Schema encoding (all '0' for new base record)
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
             # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
             self.table.base_pages[RID_COLUMN].append(rid) # point to itself first
             self.table.page_directory[rid] = []
             self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
-        print(f"table now: {self.table.base_pages}")
         return True
 
     
@@ -72,37 +70,7 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select(self, search_key, search_key_index, projected_columns_index):
-        target_bids = self.table.index.locate(search_key_index, search_key)
-        base_page_pos = [self.table.page_directory[bid] for bid in target_bids]
-
-        # if not been modified at all, return needed columns from base page
-        records = []
-        for base_pos in base_page_pos:
-          if self.table.base_pages[INDIRECTION_COLUMN][base_pos] == -1:
-              rid = self.table.base_pages[RID_COLUMN][base_pos]
-              key = self.table.base_pages[self.table.key][base_pos]
-              col = []
-              for i in range(self.table.num_columns):
-                  if projected_columns_index[i] != 1:
-                      continue
-                  col.append(self.table.base_pages[i][base_pos])
-              records.append(Record(self.table, rid, key, col))
-          
-          # if some been modified, check tail page
-          tid_target = self.table.base_pages[INDIRECTION_COLUMN][base_pos]
-          tail_page_pos = self.table.page_directory[tid_target]
-          for i in range(self.table.num_columns):
-              if projected_columns_index[i] != 1:
-                  continue
-              
-              # if the specific column has been modified <=> schema encoding = 1
-              if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
-                  records.append(self.table.tail_pages[i][tail_page_pos])
-              # the value has not been modified
-              else:
-                  records.append(self.table.base_pages[i][base_pos])
-            
-        return records
+        return self.select_version(search_key, search_key_index, projected_columns_index, 0)
 
     
     """
@@ -116,30 +84,40 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select_version(self, search_key, search_key_index, projected_columns_index, relative_version):
-        bid_target = self.table.index.locate(search_key_index, search_key)[0]
-        base_page_pos = self.table.page_directory[bid_target]
+        # assuming rids = position of that item in the base page
+        base_page_pos = self.table.index.locate(search_key_index, search_key)
 
         # if not been modified at all, return needed columns from base page
-        if self.table.base_pages[INDIRECTION_COLUMN][base_page_pos] == -1:
-            return [self.table.base_pages[i][base_page_pos] 
-                    for i in range(self.table.num_columns) if projected_columns_index[i] == 1]
-        
-        # if some been modified, check tail page
-        output = []
-        tid_target = self.table.base_pages[INDIRECTION_COLUMN][base_page_pos]
-        tail_page_pos = self.table.page_directory[tid_target]
-        for i in range(self.table.num_columns):
-            if projected_columns_index[i] != 1:
-                continue
-            
-            # if the specific column has been modified <=> schema encoding = 1
-            if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_page_pos][i] == 1:
-                output.append(self.table.tail_pages[i][tail_page_pos])
-            # the value has not been modified
-            else:
-                output.append(self.table.base_pages[i][base_page_pos])
-            
-        return output
+        records = []
+        for base_pos in base_page_pos:
+          if abs(relative_version) > len(self.table.page_directory[base_pos]) - 2:
+              key = self.table.base_pages[self.table.key][base_pos]
+              col = []
+              for i in range(self.table.num_columns):
+                  if projected_columns_index[i] != 1:
+                      continue
+                  col.append(self.table.base_pages[i][base_pos])
+              records.append(Record(base_pos, key, col))
+              continue
+          
+          # if some been modified, check tail page
+          # assuming pos = tid
+          tail_page_pos = self.table.page_directory[base_pos][relative_version]
+          key = self.table.base_pages[self.table.key][base_pos]
+          col = []
+          for i in range(self.table.num_columns):
+              if projected_columns_index[i] != 1:
+                  continue
+              
+              # if the specific column has been modified <=> schema encoding = 1
+              if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
+                  col.append(self.table.tail_pages[i][tail_page_pos])
+              # the value has not been modified
+              else:
+                  col.append(self.table.base_pages[i][base_pos])
+          records.append(Record(base_pos, key, col))
+
+        return records
     
 
     
@@ -162,14 +140,13 @@ class Query:
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
             if columns[col_index]==None:
-                self.table.tail_pages[col_index].append(self.table.base_pages[col_index])
+                self.table.tail_pages[col_index].append(self.table.base_pages[col_index][record_index])
                 continue
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN][record_index][col_index] = 1
             self.table.tail_pages[col_index].append(columns[col_index])
         rid = self.table.base_pages[RID_COLUMN][record_index]
-        print(f"rid is {rid}")
         self.table.tail_pages[RID_COLUMN].append(rid)
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
-        print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
         return True 
 
 
