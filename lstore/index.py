@@ -1,6 +1,7 @@
 from BTrees.OOBTree import OOBTree
-# from lstore.table import Table, Record
+from lstore.table import RID_COLUMN
 import hashlib
+from collections import defaultdict
 from typing import List
 
 """
@@ -9,7 +10,6 @@ other columns can be indexed through this object. Indices are usually B-Trees, b
 can be used as well.
 """
 class Index:
-
     def __init__(self, table):
         self.table = table
 
@@ -87,15 +87,16 @@ class Index:
         # try hash index first
         if self.hash_indices[column] is not None:
             bucket_num = self._hash_value(value, self.num_buckets[column])
-            bucket = self.hash_indices[column][bucket_num]
-            return [rid for rid, val in bucket if val == value]
+            if bucket_num in self.hash_indices[column]:
+                bucket = self.hash_indices[column][bucket_num]
+                return [rid for rid, val in bucket if val == value]
             
         # try B-tree index
         if self.btree_indices[column] is not None:
             try:
                 return [self.btree_indices[column][value]]
             except KeyError:
-                return []
+                pass
                 
         # brute force
         return [i for i, val in enumerate(self.table.base_pages[column]) if val == value]
@@ -109,14 +110,20 @@ class Index:
             
         if begin > end:
             begin, end = end, begin
+
+        results = []
             
         # try B-tree
         if self.btree_indices[column] is not None:
             btree = self.btree_indices[column]
-            return [rid for _, rid in btree.items(begin, end)]
+            try:
+                for value in btree.keys(min=begin, max=end):
+                    results.append[btree[value]]
+            except KeyError:
+                pass
             
         # try brute force
-        return [i for i, value in enumerate(self.table.base_pages[column]) if begin <= value <= end]
+        return [rid for rid, value in enumerate(self.table.base_pages[column]) if begin <= value <= end]
     
 
     """
@@ -127,20 +134,25 @@ class Index:
             raise ValueError(f"Invalid column number: {column}")
             
         # Create hash index with bucketing
-        self.hash_indices[column] = dict(list)
+        self.hash_indices[column] = defaultdict(list)
         self.num_records[column] = 0
         
-        for i, value in enumerate(self.table.base_pages[column]):
-            bucket_num = self._hash_value(value, self.num_buckets[column])
-            self.hash_indices[column][bucket_num].append((i, value))
-            self.num_records[column] += 1
-            
-            self._check_and_resize(column)
-            
         # Create B-tree index
         self.btree_indices[column] = OOBTree()
+
         for i, value in enumerate(self.table.base_pages[column]):
-            self.btree_indices[column][value] = i
+            if value is not None:
+                rid = self.table.base_pages[RID_COLUMN][i]
+
+                bucket_num = self._hash_value(value, self.num_buckets[column])
+                if bucket_num not in self.hash_indices[column]:
+                    self.hash_indices[column][bucket_num] = []
+                self.hash_indices[column][bucket_num].append((rid, value))
+                self.num_records[column] += 1
+                self._check_and_resize(column)
+
+                self.btree_indices[column][value] = rid
+
 
     """
     # add single entry to index
@@ -151,10 +163,13 @@ class Index:
             
         if self.hash_indices[column] is not None:
             bucket_num = self._hash_value(value, self.num_buckets[column])
-            self.hash_indices[column][bucket_num].append((rid, value))
-            self.num_records[column] += 1
-            
-            self._check_and_resize(column)
+            if bucket_num not in self.hash_indices[column]: 
+                self.hash_indices[column][bucket_num] = []
+
+            if not any(r == rid for r, _ in self.hash_indices[column[bucket_num]]):
+                self.hash_indices[column][bucket_num].append((rid, value))
+                self.num_records[column] += 1
+                self._check_and_resize(column)
             
         if self.btree_indices[column] is not None:
             self.btree_indices[column][value] = rid
