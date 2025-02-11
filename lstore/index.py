@@ -1,4 +1,5 @@
 from BTrees.OOBTree import OOBTree
+# from lstore.table import Table, Record
 import hashlib
 from typing import List
 
@@ -97,8 +98,7 @@ class Index:
                 return []
                 
         # brute force
-        return [i for i, record in enumerate(self.table.records) 
-                if record[column] == value]
+        return [i for i, val in enumerate(self.table.base_pages[column]) if val == value]
     
     """
     Locate all records within range [begin, end] in specified column
@@ -116,14 +116,13 @@ class Index:
             return [rid for _, rid in btree.items(begin, end)]
             
         # try brute force
-        return [i for i, record in enumerate(self.table.records)
-                if begin <= record[column] <= end]
+        return [i for i, value in enumerate(self.table.base_pages[column]) if begin <= value <= end]
     
 
     """
     # optional: Create index on specific column
     """
-    def create_index(self, column: int) -> None:
+    def index_column(self, column: int) -> None:
         if not (0 <= column < self.table.num_columns):
             raise ValueError(f"Invalid column number: {column}")
             
@@ -131,8 +130,7 @@ class Index:
         self.hash_indices[column] = dict(list)
         self.num_records[column] = 0
         
-        for i, record in enumerate(self.table.records):
-            value = record[column]
+        for i, value in enumerate(self.table.base_pages[column]):
             bucket_num = self._hash_value(value, self.num_buckets[column])
             self.hash_indices[column][bucket_num].append((i, value))
             self.num_records[column] += 1
@@ -141,9 +139,25 @@ class Index:
             
         # Create B-tree index
         self.btree_indices[column] = OOBTree()
-        for i, record in enumerate(self.table.records):
-            value = record[column]
+        for i, value in enumerate(self.table.base_pages[column]):
             self.btree_indices[column][value] = i
+
+    """
+    # add single entry to index
+    """
+    def index_entry(self, column: int, rid: int, value: int) -> None:
+        if not (0 <= column < self.table.num_columns):
+            raise ValueError(f"Invalid column number: {column}")
+            
+        if self.hash_indices[column] is not None:
+            bucket_num = self._hash_value(value, self.num_buckets[column])
+            self.hash_indices[column][bucket_num].append((rid, value))
+            self.num_records[column] += 1
+            
+            self._check_and_resize(column)
+            
+        if self.btree_indices[column] is not None:
+            self.btree_indices[column][value] = rid
 
     """
     # optional: Drop index of specific column
@@ -156,3 +170,5 @@ class Index:
         self.btree_indices[column] = None
         self.num_records[column] = 0
         self.num_buckets[column] = 101
+
+   ### not sure if drop index is supposed to drop whole column or simple one index entry
