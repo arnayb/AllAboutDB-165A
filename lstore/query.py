@@ -1,6 +1,16 @@
-from lstore.table import Table, Record
+from lstore.table import (
+    Table, 
+    Record, 
+    INDIRECTION_COLUMN,
+    RID_COLUMN,
+    TIMESTAMP_COLUMN,
+    SCHEMA_ENCODING_COLUMN
+)
 from lstore.index import Index
 
+BASE_RID = "BID"
+TAIL_RID = "TID"
+RID_INT = 3
 
 class Query:
     """
@@ -33,19 +43,19 @@ class Query:
     def insert(self, *columns):
 
         if isinstance(columns[0], (list, tuple)):
-            rows = columns 
+            rows = columns
         else:
             rows = [columns] #so can be parsed in forloop if only1
         for row in rows:
-            rid = self.table.rid_counter
+            rid = BASE_RID + self.table.rid_counter
             self.table.rid_counter += 1
 
             # Schema encoding (all '0' for new base record)
-            schema_encoding = '0' * self.table.num_columns
-            #assume length always good
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
+            # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
-            self.table.base_pages[self.table.num_columns].append(-1) #-1 means no indirection column yet
+            self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
             self.table.page_directory[rid] = len(self.table.base_pages[0]) - 1  # Position in Base Page
         print(f"table now: {self.table.base_pages}")
         return True
