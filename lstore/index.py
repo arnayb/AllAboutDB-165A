@@ -97,8 +97,8 @@ class Index:
                 return []
                 
         # brute force
-        return [i for i, record in enumerate(self.table.records) 
-                if record[column] == value]
+        return [i for i in range(len(self.table.base_pages[column])) 
+                if self.table.base_pages[column][i] == value]
     
     """
     Locate all records within range [begin, end] in specified column
@@ -116,8 +116,8 @@ class Index:
             return [rid for _, rid in btree.items(begin, end)]
             
         # try brute force
-        return [i for i, record in enumerate(self.table.records)
-                if begin <= record[column] <= end]
+        return [i for i in range(len(self.table.base_pages[column])) 
+                if begin <= self.table.base_pages[column][i] <= end]
     
 
     """
@@ -131,10 +131,11 @@ class Index:
         self.hash_indices[column] = dict(list)
         self.num_records[column] = 0
         
-        for i, record in enumerate(self.table.records):
-            value = record[column]
-            bucket_num = self._hash_value(value, self.num_buckets[column])
+        for i in range(len(self.table.base_pages[column])):
+            value = self.table.base_pages[column][i]
+            bucket_num = self._generate_hash(value, self.num_buckets[column])
             self.hash_indices[column][bucket_num].append((i, value))
+
             self.num_records[column] += 1
             
             self._check_and_resize(column)
