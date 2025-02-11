@@ -113,6 +113,7 @@ class Query:
             self.table.tail_pages[col_index].append(columns[col_index])
         rid = self.table.base_pages[RID_COLUMN][record_index]
         print(f"rid is {rid}")
+        self.table.tail_pages[RID_COLUMN].append(rid)
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
         print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
         return True 
