@@ -31,9 +31,26 @@ class Query:
     # Return False if record doesn't exist or is locked due to 2PL
     """
     def delete(self, primary_key):
-        
-        pass
+        p_key_col = self.table.base_pages[self.table.key]
+        record_index = -1
+        for x in range(0, len(p_key_col)):
+            if p_key_col[x] == primary_key:
+                record_index = x
+                break
+
+        if record_index == -1:
+            return False  
+        rid = self.table.base_pages[RID_COLUMN][record_index]# point to itself first
+        if self.isDeleted(rid):
+            return False
+        self.table.page_directory[rid][0]=-1 #setting to -1 means it's dead
+        return True
     
+    def isDeleted(self, rid):
+         if self.table.page_directory[rid][0] == -1:
+             return True
+         return False
+
     
     """
     # Insert a record with specified columns
