@@ -97,12 +97,12 @@ class Query:
               
               # if the specific column has been modified <=> schema encoding = 1
               if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
-                  output.append(self.table.tail_pages[i][tail_page_pos])
+                  records.append(self.table.tail_pages[i][tail_page_pos])
               # the value has not been modified
               else:
-                  output.append(self.table.base_pages[i][base_pos])
+                  records.append(self.table.base_pages[i][base_pos])
             
-        return output
+        return records
 
     
     """
