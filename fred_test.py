@@ -20,7 +20,8 @@ query.update(102, 102, 88, 85, 80, 78)  # Update student ID 102 grades
 
 # Update record with student ID 103 (update their grades)
 query.update(103, 103, 100, 98, 99, 96)  # Update student ID 103 grades
-
+query.update(103, 104, 100, 98, 99, 96)  # Update student ID 103 grades
 # Output the state of the table and tail pages after operations
 print(f"Base Pages: {grades_table.base_pages}")
 print(f"Tail Pages: {grades_table.tail_pages}")
+print(f"page dir: {grades_table.page_directory}")
