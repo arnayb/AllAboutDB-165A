@@ -1,8 +1,9 @@
 from BTrees.OOBTree import OOBTree
-from lstore.table import RID_COLUMN
 import hashlib
 from collections import defaultdict
 from typing import List
+
+RID_COLUMN = -2
 
 """
 A data strucutre holding indices for various columns of a table. Key column should be indexd by default, 
