@@ -102,7 +102,7 @@ class Query:
           
           # if some been modified, check tail page
           # assuming pos = tid
-          tail_page_pos = self.table.page_directory[base_pos][relative_version]
+          tail_page_pos = self.table.page_directory[base_pos][relative_version - 1]
           key = self.table.base_pages[self.table.key][base_pos]
           col = []
           for i in range(self.table.num_columns):

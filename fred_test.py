@@ -30,6 +30,12 @@ for sid in range(101,105):
     for i, column in enumerate(record.columns):
       print(i, column)
 
+print("select version")
+records = query.select_version(103, 0, [1, 1, 1, 1, 1], -1)
+for record in records:
+  for i, column in enumerate(record.columns):
+    print(i, column)
+
 
 # Output the state of the table and tail pages after operations
 print(f"Base Pages: {grades_table.base_pages}")
