@@ -129,7 +129,34 @@ class Query:
     # Returns False if no record exists in the given range
     """
     def sum(self, start_range, end_range, aggregate_column_index):
-        pass
+        total = 0
+        found = False
+
+        for rid, page_indexes in self.table.page_directory.items():
+            primary_key = self.table.base_pages[self.table.key][page_indexes[0]]
+
+            if start_range <= primary_key <= end_range:
+                found = True
+
+                # Get the latest version index
+                latest_index = page_indexes[-1]
+
+                # If the record has been updated, use the latest tail page version
+                if len(page_indexes) > 1:
+                    latest_index = page_indexes[-1]  # Always take the latest tail version
+
+                    # Adjust index to retrieve from tail pages if needed
+                    tail_offset = latest_index - len(self.table.base_pages[aggregate_column_index])
+                    if tail_offset >= 0 and tail_offset < len(self.table.tail_pages[aggregate_column_index]):
+                        total += self.table.tail_pages[aggregate_column_index][tail_offset]
+                    else:
+                        total += self.table.base_pages[aggregate_column_index][page_indexes[0]]
+
+                # If the record was never updated, use the base page value
+                else:
+                    total += self.table.base_pages[aggregate_column_index][page_indexes[0]]
+
+        return total if found else False
 
     
     """
@@ -141,8 +168,31 @@ class Query:
     # Returns the summation of the given range upon success
     # Returns False if no record exists in the given range
     """
-    def sum_version(self, start_range, end_range, aggregate_column_index, relative_version):
-        pass
+    def sumVersion(self, start_range, end_range, aggregate_column_index, relative_version):
+        total = 0
+        found = False
+
+        for rid, page_indexes in self.table.page_directory.items():
+            primary_key = self.table.base_pages[self.table.key][page_indexes[0]]
+
+            if start_range <= primary_key <= end_range:
+                found = True
+
+                # Ensure relative version is valid
+                if relative_version >= len(page_indexes):
+                    version_index = page_indexes[0]  # Default to oldest version
+                else:
+                    version_index = page_indexes[-(relative_version + 1)]  # Fetch previous version
+
+                # Get the correct version
+                if version_index < len(self.table.base_pages[aggregate_column_index]):
+                    total += self.table.base_pages[aggregate_column_index][version_index]
+                else:
+                    tail_offset = version_index - len(self.table.base_pages[aggregate_column_index])
+                    total += self.table.tail_pages[aggregate_column_index][tail_offset]
+                    
+        return total if found else False
+        
 
     
     """
