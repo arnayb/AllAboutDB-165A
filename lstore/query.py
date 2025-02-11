@@ -10,7 +10,6 @@ from lstore.index import Index
 
 BASE_RID = "BID"
 TAIL_RID = "TID"
-RID_INT = 3
 
 class Query:
     """
@@ -71,7 +70,30 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select(self, search_key, search_key_index, projected_columns_index):
-        pass
+        bid_target = self.table.index.locate(search_key_index, search_key)[0]
+        base_page_pos = self.table.page_directory[bid_target]
+
+        # if not been modified at all, return needed columns from base page
+        if self.table.base_pages[INDIRECTION_COLUMN][base_page_pos] == -1:
+            return [self.table.base_pages[i][base_page_pos] 
+                    for i in range(self.table.num_columns) if projected_columns_index[i] == 1]
+        
+        # if some been modified, check tail page
+        output = []
+        tid_target = self.table.base_pages[INDIRECTION_COLUMN][base_page_pos]
+        tail_page_pos = self.table.page_directory[tid_target]
+        for i in range(self.table.num_columns):
+            if projected_columns_index[i] != 1:
+                continue
+            
+            # if the specific column has been modified <=> schema encoding = 1
+            if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_page_pos][i] == 1:
+                output.append(self.table.tail_pages[i][tail_page_pos])
+            # the value has not been modified
+            else:
+                output.append(self.table.base_pages[i][base_page_pos])
+            
+        return output
 
     
     """
@@ -85,7 +107,31 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select_version(self, search_key, search_key_index, projected_columns_index, relative_version):
-        pass
+        bid_target = self.table.index.locate(search_key_index, search_key)[0]
+        base_page_pos = self.table.page_directory[bid_target]
+
+        # if not been modified at all, return needed columns from base page
+        if self.table.base_pages[INDIRECTION_COLUMN][base_page_pos] == -1:
+            return [self.table.base_pages[i][base_page_pos] 
+                    for i in range(self.table.num_columns) if projected_columns_index[i] == 1]
+        
+        # if some been modified, check tail page
+        output = []
+        tid_target = self.table.base_pages[INDIRECTION_COLUMN][base_page_pos]
+        tail_page_pos = self.table.page_directory[tid_target]
+        for i in range(self.table.num_columns):
+            if projected_columns_index[i] != 1:
+                continue
+            
+            # if the specific column has been modified <=> schema encoding = 1
+            if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_page_pos][i] == 1:
+                output.append(self.table.tail_pages[i][tail_page_pos])
+            # the value has not been modified
+            else:
+                output.append(self.table.base_pages[i][base_page_pos])
+            
+        return output
+    
 
     
     """
@@ -109,7 +155,7 @@ class Query:
             self.table.tail_pages[col_index].append(columns[col_index])
 
         #set indirection column to point to last position in tailpage
-        self.table.base_pages[self.table.num_columns][record_index] = len(self.table.tail_pages[0]) - 1  
+        self.table.base_pages[INDIRECTION_COLUMN][record_index] = len(self.table.tail_pages[0]) - 1  
         print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
         return True 
 
