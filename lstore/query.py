@@ -7,6 +7,7 @@ from lstore.table import (
     SCHEMA_ENCODING_COLUMN
 )
 from lstore.index import Index
+from time import time
 
 class Query:
     """
@@ -133,6 +134,10 @@ class Query:
     # Returns False if no records exist with given key or if the target record cannot be accessed due to 2PL locking
     """
     def update(self, primary_key, *columns):
+        record_index = self.table.index.locate(self.table.key, primary_key)
+        if not record_index:  # If no record found
+            return False
+
         p_key_col = self.table.base_pages[self.table.key]
         record_index = -1
         for x in range(0, len(p_key_col)):
