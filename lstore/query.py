@@ -47,16 +47,27 @@ class Query:
         else:
             rows = [columns] #so can be parsed in forloop if only1
         for row in rows:
+            
             rid = BASE_RID + self.table.rid_counter
             self.table.rid_counter += 1
+
+            # print(f"rid is {rid}")
             # Schema encoding (all '0' for new base record)
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
             # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
-            self.table.base_pages[RID_COLUMN].append(rid) # point to itself first
-            self.table.page_directory[rid] = []
+
+                if self.table.index.hash_indices[col_index] is not None:
+                    self.table.index.index_column(col_index, rid, col_value)
+
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append('0' * self.table.num_columns)
+            self.table.base_pages[RID_COLUMN].append(rid) #
+            self.table.base_pages[TIMESTAMP_COLUMN].append(int(time())) 
+            self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
+
             self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
+        # print(f"table now: {self.table.base_pages}")
         return True
 
     
