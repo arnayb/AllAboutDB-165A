@@ -112,10 +112,11 @@ class Query:
           tail_page_pos = self.table.page_directory[base_pos][relative_version - 1]
           key = self.table.base_pages[self.table.key][base_pos]
           col = []
+          tail = []
           for i in range(self.table.num_columns):
               if projected_columns_index[i] != 1:
                   continue
-              
+              tail.append(self.table.tail_pages[i][tail_page_pos])
               # if the specific column has been modified <=> schema encoding = 1
               if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
                   col.append(self.table.tail_pages[i][tail_page_pos])
@@ -147,15 +148,18 @@ class Query:
 
         if record_index == -1:
             return False  
-
+        rid = self.table.base_pages[RID_COLUMN][record_index]
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
             if columns[col_index]==None:
-                self.table.tail_pages[col_index].append(self.table.base_pages[col_index][record_index])
+                if len(self.table.page_directory[rid])>1:
+                    last_tail = self.table.page_directory[rid][-1]
+                    self.table.tail_pages[col_index].append(self.table.tail_pages[col_index][last_tail])
+                else:
+                    self.table.tail_pages[col_index].append(self.table.base_pages[col_index][record_index])
                 continue
             self.table.base_pages[SCHEMA_ENCODING_COLUMN][record_index][col_index] = 1
             self.table.tail_pages[col_index].append(columns[col_index])
-        rid = self.table.base_pages[RID_COLUMN][record_index]
         self.table.tail_pages[RID_COLUMN].append(rid)
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
         return True 
