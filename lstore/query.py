@@ -112,11 +112,9 @@ class Query:
           tail_page_pos = self.table.page_directory[base_pos][relative_version - 1]
           key = self.table.base_pages[self.table.key][base_pos]
           col = []
-          tail = []
           for i in range(self.table.num_columns):
               if projected_columns_index[i] != 1:
                   continue
-              tail.append(self.table.tail_pages[i][tail_page_pos])
               # if the specific column has been modified <=> schema encoding = 1
               if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
                   col.append(self.table.tail_pages[i][tail_page_pos])
