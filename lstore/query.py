@@ -9,10 +9,6 @@ from lstore.table import (
 from lstore.index import Index
 from time import time
 
-BASE_RID = 0
-TAIL_RID = 0
-RID_INT = 3
-
 class Query:
     """
     # Creates a Query object that can perform different queries on the specified table 
@@ -49,12 +45,10 @@ class Query:
             rows = [columns] #so can be parsed in forloop if only1
         for row in rows:
             
-            rid = BASE_RID + self.table.rid_counter
-            self.table.rid_counter += 1
+            rid = self.table.rid_counter
 
             # print(f"rid is {rid}")
             # Schema encoding (all '0' for new base record)
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
             # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
@@ -62,13 +56,13 @@ class Query:
                 if self.table.index.hash_indices[col_index] is not None:
                     self.table.index.index_column(col_index, rid, col_value)
 
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append('0' * self.table.num_columns)
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
             self.table.base_pages[RID_COLUMN].append(rid) #
-            self.table.base_pages[TIMESTAMP_COLUMN].append(int(time())) 
             self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
 
-            self.table.page_directory[rid] = []
-            self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
+            self.table.page_directory[rid] = [rid]  # Position in Base Page
+
+            self.table.rid_counter += 1
         # print(f"table now: {self.table.base_pages}")
         return True
 
@@ -177,7 +171,7 @@ class Query:
     # Returns False if no record exists in the given range
     """
     def sum(self, start_range, end_range, aggregate_column_index):
-        pass
+        return self.sum_version(start_range, end_range, aggregate_column_index, 0)
 
     
     """
@@ -190,7 +184,21 @@ class Query:
     # Returns False if no record exists in the given range
     """
     def sum_version(self, start_range, end_range, aggregate_column_index, relative_version):
-        pass
+        total = 0
+        rids = self.table.index.locate_range(start_range, end_range, self.table.key)
+        if len(rids) == 0:
+            return False
+        
+        for rid in rids:
+            if abs(relative_version) > len(self.table.page_directory[rid]) - 2:
+                total += self.table.base_pages[aggregate_column_index][rid]
+            else:
+                tid = self.table.page_directory[rid][relative_version - 1]
+                total += self.table.tail_pages[aggregate_column_index][tid]
+
+        return total
+
+        
 
     
     """
