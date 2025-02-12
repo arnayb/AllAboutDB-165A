@@ -8,10 +8,6 @@ from lstore.table import (
 )
 from lstore.index import Index
 
-BASE_RID = 0
-TAIL_RID = 0
-RID_INT = 3
-
 class Query:
     """
     # Creates a Query object that can perform different queries on the specified table 
@@ -47,18 +43,26 @@ class Query:
         else:
             rows = [columns] #so can be parsed in forloop if only1
         for row in rows:
-            rid = BASE_RID + self.table.rid_counter
-            self.table.rid_counter += 1
-            print(f"rid is {rid}")
+            
+            rid = self.table.rid_counter
+
+            # print(f"rid is {rid}")
             # Schema encoding (all '0' for new base record)
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN] = '0' * self.table.num_columns
             # assume length always good
             for col_index, col_value in enumerate(row):
                 self.table.base_pages[col_index].append(col_value)
-            self.table.base_pages[RID_COLUMN].append(rid) # point to itself first
-            self.table.page_directory[rid] = []
-            self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
-        print(f"table now: {self.table.base_pages}")
+
+                if self.table.index.hash_indices[col_index] is not None:
+                    self.table.index.index_column(col_index, rid, col_value)
+
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
+            self.table.base_pages[RID_COLUMN].append(rid) #
+            self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
+
+            self.table.page_directory[rid] = [rid]  # Position in Base Page
+
+            self.table.rid_counter += 1
+        # print(f"table now: {self.table.base_pages}")
         return True
 
     
@@ -72,7 +76,7 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select(self, search_key, search_key_index, projected_columns_index):
-        pass
+        return self.select_version(search_key, search_key_index, projected_columns_index, 0)
 
     
     """
@@ -86,7 +90,41 @@ class Query:
     # Assume that select will never be called on a key that doesn't exist
     """
     def select_version(self, search_key, search_key_index, projected_columns_index, relative_version):
-        pass
+        # assuming rids = position of that item in the base page
+        base_page_pos = self.table.index.locate(search_key_index, search_key)
+
+        # if not been modified at all, return needed columns from base page
+        records = []
+        for base_pos in base_page_pos:
+          if abs(relative_version) > len(self.table.page_directory[base_pos]) - 2:
+              key = self.table.base_pages[self.table.key][base_pos]
+              col = []
+              for i in range(self.table.num_columns):
+                  if projected_columns_index[i] != 1:
+                      continue
+                  col.append(self.table.base_pages[i][base_pos])
+              records.append(Record(base_pos, key, col))
+              continue
+          
+          # if some been modified, check tail page
+          # assuming pos = tid
+          tail_page_pos = self.table.page_directory[base_pos][relative_version - 1]
+          key = self.table.base_pages[self.table.key][base_pos]
+          col = []
+          for i in range(self.table.num_columns):
+              if projected_columns_index[i] != 1:
+                  continue
+              
+              # if the specific column has been modified <=> schema encoding = 1
+              if self.table.base_pages[SCHEMA_ENCODING_COLUMN][base_pos][i] == 1:
+                  col.append(self.table.tail_pages[i][tail_page_pos])
+              # the value has not been modified
+              else:
+                  col.append(self.table.base_pages[i][base_pos])
+          records.append(Record(base_pos, key, col))
+
+        return records
+    
 
     
     """
@@ -108,14 +146,13 @@ class Query:
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
             if columns[col_index]==None:
-                self.table.tail_pages[col_index].append(self.table.base_pages[col_index])
+                self.table.tail_pages[col_index].append(self.table.base_pages[col_index][record_index])
                 continue
+            self.table.base_pages[SCHEMA_ENCODING_COLUMN][record_index][col_index] = 1
             self.table.tail_pages[col_index].append(columns[col_index])
         rid = self.table.base_pages[RID_COLUMN][record_index]
-        print(f"rid is {rid}")
         self.table.tail_pages[RID_COLUMN].append(rid)
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
-        print(f"table now: {self.table.base_pages} \n tail page: {self.table.tail_pages}")
         return True 
 
 
@@ -129,34 +166,7 @@ class Query:
     # Returns False if no record exists in the given range
     """
     def sum(self, start_range, end_range, aggregate_column_index):
-        total = 0
-        found = False
-
-        for rid, page_indexes in self.table.page_directory.items():
-            primary_key = self.table.base_pages[self.table.key][page_indexes[0]]
-
-            if start_range <= primary_key <= end_range:
-                found = True
-
-                # Get the latest version index
-                latest_index = page_indexes[-1]
-
-                # If the record has been updated, use the latest tail page version
-                if len(page_indexes) > 1:
-                    latest_index = page_indexes[-1]  # Always take the latest tail version
-
-                    # Adjust index to retrieve from tail pages if needed
-                    tail_offset = latest_index - len(self.table.base_pages[aggregate_column_index])
-                    if tail_offset >= 0 and tail_offset < len(self.table.tail_pages[aggregate_column_index]):
-                        total += self.table.tail_pages[aggregate_column_index][tail_offset]
-                    else:
-                        total += self.table.base_pages[aggregate_column_index][page_indexes[0]]
-
-                # If the record was never updated, use the base page value
-                else:
-                    total += self.table.base_pages[aggregate_column_index][page_indexes[0]]
-
-        return total if found else False
+        return self.sum_version(start_range, end_range, aggregate_column_index, 0)
 
     
     """
@@ -168,30 +178,21 @@ class Query:
     # Returns the summation of the given range upon success
     # Returns False if no record exists in the given range
     """
-    def sumVersion(self, start_range, end_range, aggregate_column_index, relative_version):
+    def sum_version(self, start_range, end_range, aggregate_column_index, relative_version):
         total = 0
-        found = False
+        rids = self.table.index.locate_range(start_range, end_range, self.table.key)
+        if len(rids) == 0:
+            return False
+        
+        for rid in rids:
+            if abs(relative_version) > len(self.table.page_directory[rid]) - 2:
+                total += self.table.base_pages[aggregate_column_index][rid]
+            else:
+                tid = self.table.page_directory[rid][relative_version - 1]
+                total += self.table.tail_pages[aggregate_column_index][tid]
 
-        for rid, page_indexes in self.table.page_directory.items():
-            primary_key = self.table.base_pages[self.table.key][page_indexes[0]]
+        return total
 
-            if start_range <= primary_key <= end_range:
-                found = True
-
-                # Ensure relative version is valid
-                if relative_version >= len(page_indexes):
-                    version_index = page_indexes[0]  # Default to oldest version
-                else:
-                    version_index = page_indexes[-(relative_version + 1)]  # Fetch previous version
-
-                # Get the correct version
-                if version_index < len(self.table.base_pages[aggregate_column_index]):
-                    total += self.table.base_pages[aggregate_column_index][version_index]
-                else:
-                    tail_offset = version_index - len(self.table.base_pages[aggregate_column_index])
-                    total += self.table.tail_pages[aggregate_column_index][tail_offset]
-                    
-        return total if found else False
         
 
     
