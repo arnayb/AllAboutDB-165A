@@ -7,6 +7,7 @@ from lstore.table import (
     SCHEMA_ENCODING_COLUMN
 )
 from lstore.index import Index
+from time import time
 
 BASE_RID = 0
 TAIL_RID = 0
@@ -66,6 +67,7 @@ class Query:
             self.table.base_pages[TIMESTAMP_COLUMN].append(int(time())) 
             self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
 
+            self.table.page_directory[rid] = []
             self.table.page_directory[rid].append(len(self.table.base_pages[0]) - 1)  # Position in Base Page
         # print(f"table now: {self.table.base_pages}")
         return True
@@ -138,6 +140,10 @@ class Query:
     # Returns False if no records exist with given key or if the target record cannot be accessed due to 2PL locking
     """
     def update(self, primary_key, *columns):
+        record_index = self.table.index.locate(self.table.key, primary_key)
+        if not record_index:  # If no record found
+            return False
+
         p_key_col = self.table.base_pages[self.table.key]
         record_index = -1
         for x in range(0, len(p_key_col)):
