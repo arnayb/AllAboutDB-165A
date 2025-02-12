@@ -25,7 +25,11 @@ impl Index {
     fn new(table: Table) -> Self {
         Self {
             table,
-            column_index: HashMap::new(),
+            num_buckets: vec![101; table.num_columns],
+            num_records: vec![0; table.num_columns],
+            num_threshold: 0.75,
+            hash_indices: vec![None; table.num_columns],
+            btree_indices: vec![None; table.num_columns],
         }
     }
 
