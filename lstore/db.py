@@ -38,7 +38,8 @@ class Database():
                             table.base_pages[col_index]=(page)
             self.tables[table_name] = table
 
-        
+    
+
 
     def close(self):
         if not os.path.exists(self.path):

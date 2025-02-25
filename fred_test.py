@@ -19,7 +19,8 @@ query.insert(*[103, 95, 96, 90, 94])  # Insert record 3
 query.update(102, 102, 88, 85, 80, None)  # Update student ID 102 grades
 
 # Update record with student ID 103 (update their grades)
-query.update(103, 103, 100, 98, 99, 96)  # Update student ID 103 grades
+query.update(103, 104, 100, 98, 99, 96)  # Update student ID 103 grades
+query.insert(*[103, 95, 96, 90, 94])  # Insert record 3
 
 for sid in range(101,105):
   print("looking for", sid)
@@ -31,6 +32,12 @@ for sid in range(101,105):
 
 print("select version")
 records = query.select_version(103, 0, [1, 1, 1, 1, 1], -1)
+for record in records:
+  for i, column in enumerate(record.columns):
+    print(i, column)
+
+print("select version2")
+records = query.select_version(102, 0, [1, 1, 1, 1, 1], -2)
 for record in records:
   for i, column in enumerate(record.columns):
     print(i, column)

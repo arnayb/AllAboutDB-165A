@@ -42,20 +42,22 @@ class Index:
     """
     def create_index(self, column_number):
         self.indices[column_number] = OOBTree()
-        for i in range(self.table.base_pages[column_number].num_records):
-            # Need to check if it's deleted - not implemented yet
-            modified = (self.table.base_pages[SCHEMA_ENCODING_COLUMN].read(i) >> column_number) & 1
-            if modified:
-                tid = self.table.base_pages[INDIRECTION_COLUMN].read(i)
-                value = self.table.tail_pages[column_number].read(tid >> 1)
-                rid = tid
-            else:
-                rid = self.table.base_pages[RID_COLUMN].read(i)
-            
-            if value in self.indices[column_number]:
-                self.indices[column_number][value].append(rid)
-            else:
-                self.indices[column_number][value] = [rid]
+        for base_page in self.table.base_pages:
+          for i in range(base_page.num_records):
+              # Need to check if it's deleted - not implemented yet
+              modified = (base_page.columns[SCHEMA_ENCODING_COLUMN].read(i) >> column_number) & 1
+              if modified:
+                  tid = base_page.columns[INDIRECTION_COLUMN].read(i)
+                  tail_idx, tail_pos = self.table.page_directory[tid]
+                  value = self.table.read_tail_page(column_number, tail_idx, tail_pos)
+                  rid = tid
+              else:
+                  rid = base_page.columns[RID_COLUMN].read(i)
+              
+              if value in self.indices[column_number]:
+                  self.indices[column_number][value].append(rid)
+              else:
+                  self.indices[column_number][value] = [rid]
 
 
     """
