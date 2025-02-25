@@ -5,7 +5,6 @@ from .config import (
     TIMESTAMP_COLUMN,
     SCHEMA_ENCODING_COLUMN
 )
-from .index import Index
 from time import time
 
 class Query:
@@ -25,11 +24,14 @@ class Query:
     # Return False if record doesn't exist or is locked due to 2PL
     """
     def delete(self, primary_key):
-        rid = self.table.index.locate(primary_key)
+        rid = self.table.index.locate(self.table.key, primary_key)
         if len(rid) == 0:
             return False
         
-        self.table.base_page[INDIRECTION_COLUMN][rid[0]] = -1
+        # Need to decide which value to use logical delete
+        # self.table.base_page[INDIRECTION_COLUMN].write( <logical delete> ,rid[0]) 
+        
+        # self.table.index.indices[self.table.key].remove(primary_key)
         return True
     
     
@@ -40,23 +42,20 @@ class Query:
     """
     def insert(self, *columns):
         bid = self.table.bid_counter
-        self.table.bid_counter += 1
+        self.table.bid_counter += 2
 
         key_col = self.table.key
-        if (self.table.index.locate(key_col, columns[key_col])):
+        if self.table.index.locate(key_col, columns[key_col]):
             return False
 
         for index, value in enumerate(columns):
-            self.table.base_pages[index].append(value)
+            self.table.base_pages[index].write(value)
 
-        if columns[self.table.key] in self.table.index.indices[self.table.key]:
-            self.table.index.indices[self.table.key][columns[self.table.key]].append(bid)
-        else:
-            self.table.index.indices[self.table.key][columns[self.table.key]] = [bid]
+        self.table.index.indices[key_col][columns[key_col]] = [bid]
 
-        self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
-        self.table.base_pages[RID_COLUMN].append(bid) 
-        self.table.base_pages[INDIRECTION_COLUMN].append(bid) # point to itself first
+        self.table.base_pages[SCHEMA_ENCODING_COLUMN].write(0)
+        self.table.base_pages[RID_COLUMN].write(bid) 
+        self.table.base_pages[INDIRECTION_COLUMN].write(bid) # point to itself first
 
         self.table.page_directory[bid] = [bid]  # Position in Base Page
 
@@ -93,19 +92,21 @@ class Query:
         # if not been modified at all, return needed columns from base page
         records = []
         for rid in rids:
-          key = self.table.base_pages[self.table.key][rid]
+          pos = rid >> 1
+          key = self.table.base_pages[self.table.key].read(pos)
           col = []
           if abs(relative_version) > len(self.table.page_directory[rid]) - 2:
               for i in range(self.table.num_columns):
                   if projected_columns_index[i] != 1:
                       continue
-                  col.append(self.table.base_pages[i][rid])
+                  col.append(self.table.base_pages[i].read(pos))
           else:
               rid = self.table.page_directory[rid][relative_version - 1]
+              tail_pos = rid >> 1
               for i in range(self.table.num_columns):
                   if projected_columns_index[i] != 1:
                       continue
-                  col.append(self.table.tail_pages[i][rid])
+                  col.append(self.table.tail_pages[i].read(tail_pos))
           records.append(Record(rid, key, col))
               
         return records
@@ -118,33 +119,39 @@ class Query:
     # Returns False if no records exist with given key or if the target record cannot be accessed due to 2PL locking
     """
     def update(self, primary_key, *columns):
+        # make sure columns len == len num_columns
+        if len(columns) != self.table.num_columns:
+            return False
+        
         record_index = self.table.index.locate(self.table.key, primary_key)
         if not record_index:  # If no record found
             return False
 
         bid = record_index[0]
-        #assume columns len == len num_columns
-        schema_encoding = self.table.base_pages[SCHEMA_ENCODING_COLUMN][bid]
-        if 1 in schema_encoding:
-            latest_rid = self.table.base_pages[INDIRECTION_COLUMN][bid]
+        base_pos = bid >> 1
+        schema_encoding = self.table.base_pages[SCHEMA_ENCODING_COLUMN].read(base_pos)
+        og_schema = schema_encoding
+        if schema_encoding:
+            latest_rid = self.table.base_pages[INDIRECTION_COLUMN].read(base_pos)
+            tail_pos = latest_rid >> 1
         
         for i, value in enumerate(columns):
             if value == None:
-                if schema_encoding[i] & 1:
-                    value = self.table.tail_pages[i][latest_rid]
+                if schema_encoding & 1:
+                    value = self.table.tail_pages[i].read(tail_pos)
                 else:
-                    value = self.table.base_pages[i][bid]
-                self.table.tail_pages[i].append(value)
-                continue
-            self.table.base_pages[SCHEMA_ENCODING_COLUMN][bid][i] = 1
-            self.table.tail_pages[i].append(value)
+                    value = self.table.base_pages[i].read(base_pos)
+            else: 
+                self.table.base_pages[SCHEMA_ENCODING_COLUMN].write(og_schema | 1 << i, base_pos)
+            self.table.tail_pages[i].write(value)
+            schema_encoding >>= 1
 
         tid = self.table.tid_counter
-        self.table.tail_pages[INDIRECTION_COLUMN].append(self.table.base_pages[INDIRECTION_COLUMN][bid])
-        self.table.base_pages[INDIRECTION_COLUMN][bid] = tid
-        self.table.tail_pages[RID_COLUMN].append(tid)
+        self.table.tail_pages[INDIRECTION_COLUMN].write(self.table.base_pages[INDIRECTION_COLUMN].read(base_pos))
+        self.table.base_pages[INDIRECTION_COLUMN].write(tid, base_pos)
+        self.table.tail_pages[RID_COLUMN].write(tid)
         self.table.page_directory[bid].append(tid)
-        self.table.tid_counter += 1
+        self.table.tid_counter += 2
         return True 
 
     
@@ -178,11 +185,13 @@ class Query:
         
         for rid in rids:
             rid = rid[0]
+            base_pos = rid >> 1
             if abs(relative_version) > len(self.table.page_directory[rid]) - 2:
-                total += self.table.base_pages[aggregate_column_index][rid]
+                total += self.table.base_pages[aggregate_column_index].read(base_pos)
             else:
                 tid = self.table.page_directory[rid][relative_version - 1]
-                total += self.table.tail_pages[aggregate_column_index][tid]
+                tail_pos = tid >> 1
+                total += self.table.tail_pages[aggregate_column_index].read(tail_pos)
 
         return total
 

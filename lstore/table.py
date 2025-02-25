@@ -27,11 +27,11 @@ class Table:
           # rid column
           # timestamp column
           # schema encoding column
-        self.base_pages = [[] for _ in range(num_columns + 4)]
-        self.tail_pages = [[] for _ in range(num_columns + 4)]
+        self.base_pages = [Page() for _ in range(num_columns + 4)]
+        self.tail_pages = [Page() for _ in range(num_columns + 4)]
         self.index.create_index(key)
         self.bid_counter = 0
-        self.tid_counter = 0
+        self.tid_counter = 1
 
     def __merge(self):
         print("merge is happening")

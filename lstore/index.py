@@ -1,6 +1,4 @@
 from BTrees.OOBTree import OOBTree
-from collections import defaultdict
-from typing import List
 from .config import (
     INDIRECTION_COLUMN,
     RID_COLUMN,
@@ -44,13 +42,15 @@ class Index:
     """
     def create_index(self, column_number):
         self.indices[column_number] = OOBTree()
-        for i, value in enumerate(self.table.base_pages[column_number]):
-            if self.table.base_pages[SCHEMA_ENCODING_COLUMN][i][column_number] & 1:
-                tid = self.table.base_pages[INDIRECTION_COLUMN][i]
-                value = self.table.tail_pages[column_number][tid]
+        for i in range(self.table.base_pages[column_number].num_records):
+            # Need to check if it's deleted - not implemented yet
+            modified = (self.table.base_pages[SCHEMA_ENCODING_COLUMN].read(i) >> column_number) & 1
+            if modified:
+                tid = self.table.base_pages[INDIRECTION_COLUMN].read(i)
+                value = self.table.tail_pages[column_number].read(tid >> 1)
                 rid = tid
             else:
-                rid = self.table.base_pages[RID_COLUMN][i]
+                rid = self.table.base_pages[RID_COLUMN].read(i)
             
             if value in self.indices[column_number]:
                 self.indices[column_number][value].append(rid)
