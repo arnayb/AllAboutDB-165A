@@ -128,6 +128,7 @@ class Query:
             return False
 
         bid = record_index[0]
+
         base_pos = bid >> 1
         schema_encoding = self.table.base_pages[SCHEMA_ENCODING_COLUMN].read(base_pos)
         og_schema = schema_encoding
