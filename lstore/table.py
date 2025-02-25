@@ -46,14 +46,6 @@ class Table:
         self.bid_counter = 0
         self.tid_counter = 1
 
-    def new_base_page(self):
-        self.num_base_pages += 1
-        self.base_pages.append(LogicalPage(self))
-
-    def new_tail_page(self):
-        self.num_tail_pages += 1
-        self.tail_pages.append(LogicalPage(self))
-
     def read_base_page(self, col_idx, base_idx, base_pos):
         return self.base_pages[base_idx].columns[col_idx].read(base_pos)
 
@@ -62,14 +54,16 @@ class Table:
 
     def write_base_page(self, col_idx, value, base_idx = -1, base_pos = -1):
         if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
-            self.new_base_page()
+            self.num_base_pages += 1
+            self.base_pages.append(LogicalPage(self))
         
         self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
     
     def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
         if self.num_tail_pages == 0 or \
           (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
-            self.new_tail_page()
+            self.num_tail_pages += 1
+            self.tail_pages.append(LogicalPage(self))
         
         self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
 

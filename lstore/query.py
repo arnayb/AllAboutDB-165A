@@ -29,11 +29,10 @@ class Query:
             return False
         
         # Need to decide which value to use logical delete
-        # self.table.base_page[INDIRECTION_COLUMN].write( <logical delete> ,rid[0]) 
+        # base_idx, base_pos = self.table.page_directory[bid]
+        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos)
       
         del self.table.index.indices[self.table.key][primary_key]
-        # base_idx, base_pos = self.table.page_directory[bid]
-        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos) \
         return True
     
     
@@ -88,7 +87,7 @@ class Query:
     """
     def select_version(self, search_key, search_key_index, projected_columns_index, relative_version):
         bids = self.table.index.locate(search_key_index, search_key)
-        # if not been modified at all, return needed columns from base page
+        
         records = []
         for bid in bids:
           base_idx, base_pos = self.table.page_directory[bid]
@@ -147,13 +146,10 @@ class Query:
         base_idx, base_pos = self.table.page_directory[bid]
         schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
         
-        # Create a copy of columns to avoid modifying the original
-        updated_columns = list(columns)
-        
         if schema_encoding:
             tid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             tail_idx, tail_pos = self.table.page_directory[tid]
-            for i, value in enumerate(updated_columns):
+            for i, value in enumerate(columns):
                 if value == None:
                     value = self.table.read_tail_page(i, tail_idx, tail_pos)
                 else:
@@ -161,7 +157,7 @@ class Query:
                     self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
                 self.table.write_tail_page(i, value)
         else:
-            for i, value in enumerate(updated_columns):
+            for i, value in enumerate(columns):
                 if value == None:
                     value = self.table.read_base_page(i, base_idx, base_pos)
                 else:
