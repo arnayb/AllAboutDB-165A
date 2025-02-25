@@ -161,7 +161,7 @@ class Query:
             self.table.base_pages[SCHEMA_ENCODING_COLUMN][record_index][col_index] = 1
             self.table.tail_pages[col_index].append(columns[col_index])
         self.table.tail_pages[RID_COLUMN].append(rid)
-        self.table.base_pages[INDIRECTION_COLUMN][record_index] = len(self.table.tail_pages[0])#set indirection col to point to last tailpage
+        self.table.base_pages[INDIRECTION_COLUMN][record_index] = len(self.table.tail_pages[0]) -1#set indirection col to point to last tailpage
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
         return True 
 
