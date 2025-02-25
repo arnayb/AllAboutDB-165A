@@ -14,14 +14,14 @@ class Page:
     # Returns False if page is full
     """
     def write(self, value, index = -1):
+        if index == -1 and not self.has_capacity():
+            return False
         if index == -1:
             index = self.num_records
-        if not self.has_capacity():
-            return False
+            self.num_records += 1
         
         byte_value = value.to_bytes(8, byteorder='big')
         self.data[index * 8: (index + 1) * 8] = byte_value
-        self.num_records += 1
         return True
 
     def read(self, index):
