@@ -29,10 +29,11 @@ class Query:
             return False
         
         # Need to decide which value to use logical delete
+        # self.table.base_page[INDIRECTION_COLUMN].write( <logical delete> ,rid[0]) 
+      
+        del self.table.index.indices[self.table.key][primary_key]
         # base_idx, base_pos = self.table.page_directory[bid]
-        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos) 
-        
-        self.table.index.indices[self.table.key].remove(primary_key)
+        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos) \
         return True
     
     
@@ -134,12 +135,25 @@ class Query:
 
         bid = record_index[0]
 
+        # Check if trying to update to an existing primary key
+        if columns[self.table.key] != None and columns[self.table.key] != primary_key:
+            # If the new primary key already exists in another record, reject the update
+            existing_records = self.table.index.locate(self.table.key, columns[self.table.key])
+            if existing_records:
+                return False
+            del self.table.index.indices[self.table.key][primary_key]
+            self.table.index.indices[self.table.key][columns[self.table.key]] = [bid]
+
         base_idx, base_pos = self.table.page_directory[bid]
         schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
+        
+        # Create a copy of columns to avoid modifying the original
+        updated_columns = list(columns)
+        
         if schema_encoding:
             tid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             tail_idx, tail_pos = self.table.page_directory[tid]
-            for i, value in enumerate(columns):
+            for i, value in enumerate(updated_columns):
                 if value == None:
                     value = self.table.read_tail_page(i, tail_idx, tail_pos)
                 else:
@@ -147,10 +161,10 @@ class Query:
                     self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
                 self.table.write_tail_page(i, value)
         else:
-            for i, value in enumerate(columns):
+            for i, value in enumerate(updated_columns):
                 if value == None:
                     value = self.table.read_base_page(i, base_idx, base_pos)
-                else: 
+                else:
                     schema_encoding = schema_encoding | 1 << i
                     self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
                 self.table.write_tail_page(i, value)
@@ -162,7 +176,7 @@ class Query:
         self.table.page_directory[tid] = [self.table.num_tail_pages - 1, self.table.tail_pages[-1].num_records]
         self.table.tid_counter += 2
         self.table.tail_pages[-1].num_records += 1
-        return True 
+        return True
 
     
     """
