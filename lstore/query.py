@@ -58,7 +58,7 @@ class Query:
 
             self.table.base_pages[SCHEMA_ENCODING_COLUMN].append([0] * self.table.num_columns)
             self.table.base_pages[RID_COLUMN].append(rid) #
-            self.table.base_pages[INDIRECTION_COLUMN].append(rid) # point to itself first
+            self.table.base_pages[INDIRECTION_COLUMN].append(-1) # point to last tailpage
 
             self.table.page_directory[rid] = [rid]  # Position in Base Page
 
@@ -149,18 +149,19 @@ class Query:
         if record_index == -1:
             return False  
         rid = self.table.base_pages[RID_COLUMN][record_index]
+        tail_page_index = self.table.base_pages[INDIRECTION_COLUMN][record_index]
         #assume columns len == len num_columns
         for col_index in range(self.table.num_columns):
             if columns[col_index]==None:
-                if len(self.table.page_directory[rid])>1:
-                    last_tail = self.table.page_directory[rid][-1]
-                    self.table.tail_pages[col_index].append(self.table.tail_pages[col_index][last_tail])
+                if tail_page_index != -1:
+                    self.table.tail_pages[col_index].append(self.table.tail_pages[col_index][tail_page_index])
                 else:
                     self.table.tail_pages[col_index].append(self.table.base_pages[col_index][record_index])
                 continue
             self.table.base_pages[SCHEMA_ENCODING_COLUMN][record_index][col_index] = 1
             self.table.tail_pages[col_index].append(columns[col_index])
         self.table.tail_pages[RID_COLUMN].append(rid)
+        self.table.base_pages[INDIRECTION_COLUMN][record_index] = len(self.table.tail_pages[0])#set indirection col to point to last tailpage
         self.table.page_directory[rid].append(len(self.table.tail_pages[0]) - 1)  
         return True 
 
