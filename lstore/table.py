@@ -1,10 +1,6 @@
-from lstore.index import Index
+from .index import Index
+from .page import Page
 from time import time
-
-INDIRECTION_COLUMN = -1
-RID_COLUMN = -2
-TIMESTAMP_COLUMN = -3
-SCHEMA_ENCODING_COLUMN = -4
 
 class Record:
 
@@ -12,6 +8,22 @@ class Record:
         self.rid = rid
         self.key = key
         self.columns = columns
+
+class LogicalPage:
+    
+    def __init__(self, table):
+        self.key = table.key
+        self.num_columns = table.num_columns
+        self.num_records = 0
+        # + 4 for (as declared by global variables)
+          # indirection column
+          # rid column
+          # timestamp column
+          # schema encoding column
+        self.columns = [Page() for _ in range(self.num_columns + 4)]
+      
+    def has_capacity(self):
+        return self.num_records < 512
 
 class Table:
 
@@ -26,15 +38,40 @@ class Table:
         self.num_columns = num_columns
         self.page_directory = {}
         self.index = Index(self)
-        # + 4 for (as declared by global variables)
-          # indirection column
-          # rid column
-          # timestamp column
-          # schema encoding column
-        self.base_pages = [[] for _ in range(num_columns + 4)]
-        self.tail_pages = [[] for _ in range(num_columns + 4)]  
-        self.rid_counter = 0
-        pass
+        self.num_base_pages = 1
+        self.num_tail_pages = 0
+        self.base_pages = [LogicalPage(self)]
+        self.tail_pages = []
+        self.index.create_index(key)
+        self.bid_counter = 0
+        self.tid_counter = 1
+
+    def new_base_page(self):
+        self.num_base_pages += 1
+        self.base_pages.append(LogicalPage(self))
+
+    def new_tail_page(self):
+        self.num_tail_pages += 1
+        self.tail_pages.append(LogicalPage(self))
+
+    def read_base_page(self, col_idx, base_idx, base_pos):
+        return self.base_pages[base_idx].columns[col_idx].read(base_pos)
+
+    def read_tail_page(self, col_idx, tail_idx, tail_pos):
+        return self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+
+    def write_base_page(self, col_idx, value, base_idx = -1, base_pos = -1):
+        if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
+            self.new_base_page()
+        
+        self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+    
+    def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
+        if self.num_tail_pages == 0 or \
+          (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
+            self.new_tail_page()
+        
+        self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
 
     def __merge(self):
         print("merge is happening")

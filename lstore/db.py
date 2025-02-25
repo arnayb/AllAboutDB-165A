@@ -1,4 +1,7 @@
-from lstore.table import Table
+from .table import Table
+import os
+import pickle
+
 
 class Database():
 
@@ -49,7 +52,7 @@ class Database():
                             with open(page_path, 'rb') as f:
                                 pages = msgpack.unpack(f, raw=False)
                                 target_pages[col_index] = pages
-        
+
 
     def close(self):
         pass
