@@ -30,8 +30,8 @@ class Query:
         
         # Need to decide which value to use logical delete
         # self.table.base_page[INDIRECTION_COLUMN].write( <logical delete> ,rid[0]) 
-        
-        # self.table.index.indices[self.table.key].remove(primary_key)
+      
+        del self.table.index.indices[self.table.key][primary_key]
         return True
     
     
@@ -131,14 +131,17 @@ class Query:
         if not record_index:  # If no record found
             return False
 
+        bid = record_index[0]
+
         # Check if trying to update to an existing primary key
-        if columns[self.table.key] is not None and columns[self.table.key] != primary_key:
+        if columns[self.table.key] != None and columns[self.table.key] != primary_key:
             # If the new primary key already exists in another record, reject the update
             existing_records = self.table.index.locate(self.table.key, columns[self.table.key])
             if existing_records:
                 return False
+            del self.table.index.indices[self.table.key][primary_key]
+            self.table.index.indices[self.table.key][columns[self.table.key]] = [bid]
 
-        bid = record_index[0]
         base_idx, base_pos = self.table.page_directory[bid]
         schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
         
@@ -152,12 +155,6 @@ class Query:
                 if value == None:
                     value = self.table.read_tail_page(i, tail_idx, tail_pos)
                 else:
-                    # Don't allow changing the primary key column
-                    if i == self.table.key:
-                        # If trying to update primary key to a different value, reject
-                        if value != primary_key:
-                            return False
-                    
                     schema_encoding = schema_encoding | 1 << i
                     self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
                 self.table.write_tail_page(i, value)
@@ -166,12 +163,6 @@ class Query:
                 if value == None:
                     value = self.table.read_base_page(i, base_idx, base_pos)
                 else:
-                    # Don't allow changing the primary key column
-                    if i == self.table.key:
-                        # If trying to update primary key to a different value, reject
-                        if value != primary_key:
-                            return False
-                    
                     schema_encoding = schema_encoding | 1 << i
                     self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
                 self.table.write_tail_page(i, value)
