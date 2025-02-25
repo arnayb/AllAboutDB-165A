@@ -55,7 +55,6 @@ class Query:
         self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0)
         self.table.write_base_page(RID_COLUMN, bid)
         self.table.write_base_page(INDIRECTION_COLUMN, bid) # point to itself first
-
         self.table.page_directory[bid] = [self.table.num_base_pages - 1, self.table.base_pages[-1].num_records]  # Position in Base Page
         self.table.base_pages[-1].num_records += 1
 
