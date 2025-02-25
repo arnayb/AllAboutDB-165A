@@ -1,7 +1,7 @@
 from .table import Table
 import os
 import pickle
-
+from .page import Page
 
 class Database():
 
@@ -9,53 +9,78 @@ class Database():
         self.tables = {}
         self.bufferpool = [] 
         self.page_table = {} 
+        self.path = ""
 
     def open(self, path):
-        os.makedirs(path, exist_ok=True)
+        self.path = path
+        if not os.path.exists(self.path):
+            return
 
-        # iterating through the tables in path
-        for table_name in os.listdir(path):
-            table_path = os.path.join(path, table_name)
+        for table_name in os.listdir(self.path):
+            tablepath = os.path.join(self.path, table_name)
+            if not os.path.isdir(tablepath):
+                continue
+            
+            table = self.load_table(table_name) 
 
-        
-            if os.path.isdir(table_path):
-                # loading metadata
-                meta_file = os.path.join(table_path, 'metadata.pkl')
-                #accessing the column count, primary key index
-                with open(meta_file, 'rb') as f:
-                    table_metadata = pickle.load(f)
-                    col_count = table_metadata['col_count']
-                    primary_key_index = table_metadata['primary_key_index']
+            for col_index in range(table.num_columns + 4):  
+                colpath = os.path.join(tablepath, f"col_{col_index}")
 
-                table = Table(table_name, col_count, primary_key_index)
-                self.tables.append(table) 
+                if os.path.exists(colpath):
+                    for page_filename in os.listdir(colpath):
+                        if page_filename.endswith(".dat"):
+                            page_filepath = os.path.join(colpath, page_filename)
+                            with open(page_filepath, "rb") as f:
+                                page_data = f.read()  #read raw bytees
 
-                for page_type in ['base', 'tail']:
-                    page_dir = os.path.join(table_path, page_type)
-                    os.makedirs(page_dir, exist_ok=True)
+                            page = Page()
+                            page.data = page_data 
+                            table.base_pages[col_index]=(page)
+            self.tables[table_name] = table
 
-                    target_pages = table.base_pages if page_type == 'base' else table.tail_pages
-
-                    #iterating through the columns
-                    for col_index in range(table.col_count):
-                        page_file = f"page_{col_index}.dat"
-                        page_path = os.path.join(page_dir, page_file)
-                        
-                        # checking if the requested page is already in bufferpool
-                        if page_file in self.page_table:
-                            print(f"{page_type()} Page {page_file} located in bufferpool")
-                            target_pages[col_index] = self.page_table[page_file]
-                            continue
-
-                         # If the requested record not in bufferpool, load from disk
-                        if os.path.exists(page_path):
-                            with open(page_path, 'rb') as f:
-                                pages = msgpack.unpack(f, raw=False)
-                                target_pages[col_index] = pages
+    
 
 
     def close(self):
-        pass
+        if not os.path.exists(self.path):
+            os.makedirs(self.path)
+        
+        for table in self.tables:
+            tablepath = os.path.join(self.path, self.tables[table].name)
+            if not os.path.exists(tablepath):
+                os.makedirs(tablepath)
+            
+
+            for index, page in enumerate(self.tables[table].base_pages):
+                self.save_table(table)
+                colpath = os.path.join(tablepath, f"col_{index}")
+                if not os.path.exists(colpath):
+                    os.makedirs(colpath)
+                
+                page_filename = os.path.join(colpath, f"page_{index + 1}.dat")
+                with open(page_filename, "wb") as f:
+                    f.write(page.data)  # Write the raw byte data from the page object
+
+    def save_table(self, table_name): #this saves the nonbase/tailpages
+        table = self.tables[table_name]
+        table_filename = os.path.join(self.path, table_name,  f"{table_name}.pkl")
+        with open(table_filename, "wb") as f:
+            pickle.dump(table, f)
+        
+    def load_table(self, table_name):
+        table_filename = os.path.join(self.path, table_name, f"{table_name}.pkl")
+
+        if not os.path.exists(table_filename):
+            print(f"Table {table_name} not found at {table_filename}.")
+            return None
+
+        with open(table_filename, "rb") as f:
+            table = pickle.load(f)
+        
+        table.base_pages = [Page() for _ in range(table.num_columns + 4)]
+        table.tail_pages = [Page() for _ in range(table.num_columns + 4)]
+        print(f"Table {table_name} loaded from {table_filename}")
+        return table
 
     """
     # Creates a new table
