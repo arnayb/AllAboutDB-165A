@@ -24,14 +24,15 @@ class Query:
     # Return False if record doesn't exist or is locked due to 2PL
     """
     def delete(self, primary_key):
-        rid = self.table.index.locate(self.table.key, primary_key)
-        if len(rid) == 0:
+        bid = self.table.index.locate(self.table.key, primary_key)
+        if len(bid) == 0:
             return False
         
         # Need to decide which value to use logical delete
-        # self.table.base_page[INDIRECTION_COLUMN].write( <logical delete> ,rid[0]) 
+        # base_idx, base_pos = self.table.page_directory[bid]
+        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos) 
         
-        # self.table.index.indices[self.table.key].remove(primary_key)
+        self.table.index.indices[self.table.key].remove(primary_key)
         return True
     
     
