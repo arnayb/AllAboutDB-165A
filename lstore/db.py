@@ -1,4 +1,5 @@
-from lstore.table import Table
+from .table import Table
+import os
 
 class Database():
 
@@ -8,7 +9,7 @@ class Database():
         self.page_table = {} 
 
     def open(self, path):
-         os.makedirs(path, exist_ok=True)
+        os.makedirs(path, exist_ok=True)
 
         # iterating through the tables in path
         for table_name in os.listdir(path):

@@ -11,16 +11,15 @@ grades_table = db.create_table('Grades', 5, 0)
 query = Query(grades_table)
 
 # Insert 3 records
-query.insert([101, 90, 85, 88, 92])  # Insert record 1
-query.insert([102, 78, 80, 79, 75])  # Insert record 2
-query.insert([103, 95, 96, 90, 94])  # Insert record 3
+query.insert(*[101, 90, 85, 88, 92])  # Insert record 1
+query.insert(*[102, 78, 80, 79, 75])  # Insert record 2
+query.insert(*[103, 95, 96, 90, 94])  # Insert record 3
 
 # Update record with student ID 102 (update their grades)
 query.update(102, 102, 88, 85, 80, None)  # Update student ID 102 grades
 
 # Update record with student ID 103 (update their grades)
 query.update(103, 103, 100, 98, 99, 96)  # Update student ID 103 grades
-query.update(103, 104, 100, 98, 99, 96)  # Update student ID 103 grades
 
 for sid in range(101,105):
   print("looking for", sid)

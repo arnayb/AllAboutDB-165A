@@ -1,10 +1,6 @@
-from lstore.index import Index
+from .index import Index
+from .page import Page
 from time import time
-
-INDIRECTION_COLUMN = -1
-RID_COLUMN = -2
-TIMESTAMP_COLUMN = -3
-SCHEMA_ENCODING_COLUMN = -4
 
 class Record:
 
@@ -32,9 +28,10 @@ class Table:
           # timestamp column
           # schema encoding column
         self.base_pages = [[] for _ in range(num_columns + 4)]
-        self.tail_pages = [[] for _ in range(num_columns + 4)]  
-        self.rid_counter = 0
-        pass
+        self.tail_pages = [[] for _ in range(num_columns + 4)]
+        self.index.create_index(key)
+        self.bid_counter = 0
+        self.tid_counter = 0
 
     def __merge(self):
         print("merge is happening")
