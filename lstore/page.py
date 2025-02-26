@@ -3,6 +3,9 @@ class Page:
     def __init__(self):
         self.num_records = 0
         self.data = bytearray(4096)
+        #for tracking the 'dirty' state
+        self.is_dirty = False 
+        self.dirty_map = set()
 
     # each page can hold 512 records of 64-bit int (8byte)
     def has_capacity(self):
@@ -22,6 +25,10 @@ class Page:
         
         byte_value = value.to_bytes(8, byteorder='big')
         self.data[index * 8: (index + 1) * 8] = byte_value
+        
+        #once page is written mark as dirty
+        self.is_dirty = True
+        self.dirty_map.add(index)
         return True
 
     def read(self, index):

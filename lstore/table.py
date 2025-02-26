@@ -57,6 +57,8 @@ class Table:
         self.index.create_index(key)
         self.bid_counter = 0
         self.tid_counter = 1
+        self.dirty_base_pages = set()
+        self.dirty_tail_pages = set()
     def new_base_page(self):
         self.num_base_pages += 1
         self.base_pages.append(LogicalPage(self))
@@ -75,16 +77,44 @@ class Table:
 
     def write_base_page(self, col_idx, value, base_idx = -1, base_pos = -1):
         if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
+
+            self.num_base_pages += 1
+            self.base_pages.append(LogicalPage(self))
+
+        current_value = self.base_pages[base_idx].columns[col_idx].read(base_pos)
+        if current_value != value:
+            self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+            #mark as dirty
+            self.dirty_base_pages.add((base_idx, col_idx))
+
             self.new_base_page()
         with self.base_pages[base_idx].PinLock:
-            self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+            current_value = self.base_pages[base_idx].columns[col_idx].read(base_pos)
+            if current_value != value:
+                self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+                self.dirty_base_pages.add((base_idx, col_idx))
+
     
     def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
         if self.num_tail_pages == 0 or \
           (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
+
+            self.num_tail_pages += 1
+            self.tail_pages.append(LogicalPage(self))
+        
+        current_value = self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+        if current_value != value:
+            self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
+            # Mark as dirty
+            self.dirty_tail_pages.add((tail_idx, col_idx))
+
             self.new_tail_page()
         with self.tail_pages[tail_idx].PinLock:
-            self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
+            current_value = self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+            if current_value != value:
+              self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
+              # Mark as dirty
+              self.dirty_tail_pages.add((tail_idx, col_idx))
 
     def get_table_stats(self):#for getting table metadata to save
         state = self.__dict__.copy()
@@ -123,6 +153,7 @@ class Table:
             col = []
             for i in range(self.num_columns):
                   col.append(self.read_tail_page(i, initial_idx, initial_pos))
+
 
             with self.base_pages[base_idx].PinLock:
                 for col_idx in range(self.num_columns):

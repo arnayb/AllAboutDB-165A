@@ -31,7 +31,7 @@ for i in range(0, number_of_records):
 
     records[key] = [key, randint(0, 20), randint(0, 20), randint(0, 20), randint(0, 20)]
     query.insert(*records[key])
-    print('inserted', records[key])
+    # print('inserted', records[key])
 print("Insert finished")
 
 # Check inserted records using select query
