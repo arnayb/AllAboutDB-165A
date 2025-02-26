@@ -73,6 +73,16 @@ class Table:
         
         self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
 
+    def get_table_stats(self):#for getting table metadata to save
+        state = self.__dict__.copy()
+        state.pop("base_pages", None)
+        state.pop("tail_pages", None)
+        return state
+    def restore_from_state(self, state):
+        """ Restores a table from the saved state and reinitializes pages """
+        self.__dict__.update(state)
+        self.base_pages = []
+        self.tail_pages = []
     def __merge(self):
         print("merge is happening")
         pass
