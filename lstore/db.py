@@ -45,10 +45,46 @@ class Database():
         if not os.path.exists(self.path):
             os.makedirs(self.path)
         
-        for table in self.tables:
+        for table_name, table in self.tables.items():
             tablepath = os.path.join(self.path, self.tables[table].name)
             if not os.path.exists(tablepath):
                 os.makedirs(tablepath)
+            #writing dirty base pages
+            for base_idx, col_idx in table.dirty_base_pages:
+                colpath = os.path.join(tablepath, f"base/col_{col_idx}")
+                if not os.path.exists(colpath):
+                    os.makedirs(colpath)
+
+            page_filename = os.path.join(colpath, f"page_{base_idx}.dat")
+            page = table.base_pages[base_idx].columns[col_idx]
+
+            # Write only if the page is dirty
+            if page.is_dirty:
+                with open(page_filename, "wb") as f:
+                    f.write(page.data)
+                # Clear dirty flag after writing
+                page.is_dirty = False
+        
+        # Write dirty tail pages
+        for tail_idx, col_idx in table.dirty_tail_pages:
+            colpath = os.path.join(tablepath, f"tail/col_{col_idx}")
+            if not os.path.exists(colpath):
+                os.makedirs(colpath)
+
+            page_filename = os.path.join(colpath, f"page_{tail_idx}.dat")
+            page = table.tail_pages[tail_idx].columns[col_idx]
+
+            # condition to check if page actually dirty
+            if page.is_dirty:
+                with open(page_filename, "wb") as f:
+                    f.write(page.data)
+                # Clear dirty flag after writing
+                page.is_dirty = False
+        
+        # clear dirty maps upon writing
+        table.dirty_base_pages.clear()
+        table.dirty_tail_pages.clear()
+            
             
 
             for index, page in enumerate(self.tables[table].base_pages):
