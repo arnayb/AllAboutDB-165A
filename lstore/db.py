@@ -49,8 +49,8 @@ class Database():
                 tail_page = LogicalPage(table)
                 for col_index in range(table.num_columns + 4): 
                     numrecords = numrecords_list[col_index]
-                    if os.path.exists(base_path):
-                        page_filepath = os.path.join(base_path, f"page_{col_index}.dat")
+                    if os.path.exists(tail_path):
+                        page_filepath = os.path.join(tail_path, f"page_{col_index}.dat")
                         if os.path.exists(page_filepath):
                             with open(page_filepath, "rb") as f:
                                 page_data = f.read()  #read raw bytees
