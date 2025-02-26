@@ -25,22 +25,16 @@ class Query:
     # Return False if record doesn't exist or is locked due to 2PL
     """
     def delete(self, primary_key):
-        # find records with the primary key
-        bids = self.table.index.locate(self.table.key, primary_key)
-        if not bids or len(bids) == 0:
+        bid = self.table.index.locate(self.table.key, primary_key)
+        if len(bid) == 0:
             return False
-        
-        for bid in bids:
-            if bid not in self.table.page_directory:
-                continue
-                
-            base_idx, base_pos = self.table.page_directory[bid]
-            self.table.write_base_page(INDIRECTION_COLUMN, -1, base_idx, base_pos)
-            
-            del self.table.index.indices[self.table.key][primary_key]
-            return True
-            
-        return False
+
+        # Need to decide which value to use logical delete
+        # base_idx, base_pos = self.table.page_directory[bid]
+        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos)
+
+        del self.table.index.indices[self.table.key][primary_key]
+        return True
     
     
     """
