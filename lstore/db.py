@@ -2,6 +2,7 @@ from .table import Table, LogicalPage
 import os
 import pickle
 from .page import Page
+import pdb
 
 class Database():
 
@@ -23,7 +24,6 @@ class Database():
             
             table = self.load_table(table_name) 
             table_history = self.load_page_histories(table_name)
-            print(table_history)
             for index in range(0,table.num_base_pages):
                 numrecords_list = table_history["base"][index]
                 base_path = os.path.join(tablepath, f"base_{index}")
@@ -31,15 +31,15 @@ class Database():
                 for col_index in range(table.num_columns + 4): 
                     numrecords = numrecords_list[col_index]
                     if os.path.exists(base_path):
-                        for page_filename in os.listdir(base_path):
-                            if page_filename.endswith(".dat"):
-                                page_filepath = os.path.join(base_path, page_filename)
-                                with open(page_filepath, "rb") as f:
-                                    page_data = f.read()  #read raw bytees
-                                page = Page()
-                                page.data = page_data 
-                                page.num_records = numrecords
-                                base_page.columns.append(page)
+                        page_filepath = os.path.join(base_path, f"page_{col_index}.dat")
+                        if os.path.exists(page_filepath):
+                            with open(page_filepath, "rb") as f:
+                                page_data = f.read()  #read raw bytees
+                            page = Page()
+                            page.data = page_data 
+                            page.num_records = numrecords
+                            base_page.columns[col_index]=page
+
                 base_page.num_records = max(numrecords_list)
                 table.base_pages.append(base_page)
 
@@ -49,20 +49,21 @@ class Database():
                 tail_page = LogicalPage(table)
                 for col_index in range(table.num_columns + 4): 
                     numrecords = numrecords_list[col_index]
-                    if os.path.exists(tail_path):
-                        for page_filename in os.listdir(tail_path):
-                            if page_filename.endswith(".dat"):
-                                page_filepath = os.path.join(tail_path, page_filename)
-                                with open(page_filepath, "rb") as f:
-                                    page_data = f.read()  #read raw bytees
-                                page = Page()
-                                page.data = page_data 
-                                page.num_records = numrecords
-                                tail_page.columns.append(page)
+                    if os.path.exists(base_path):
+                        page_filepath = os.path.join(base_path, f"page_{col_index}.dat")
+                        if os.path.exists(page_filepath):
+                            with open(page_filepath, "rb") as f:
+                                page_data = f.read()  #read raw bytees
+                            page = Page()
+                            page.data = page_data 
+                            page.num_records = numrecords
+                            tail_page.columns[col_index] =page
+
                 tail_page.num_records = max(numrecords_list)
                 table.tail_pages.append(tail_page)
-                print(f"numrecords: {tail_page.num_records}") 
             self.tables[table_name] = table
+
+            
 
     
 
@@ -158,7 +159,8 @@ class Database():
     def create_table(self, name, num_columns, key_index):
 
         if name in self.tables:
-            raise Exception("Table already exists")
+            print("Table already exists")
+            return self.tables[name]
                 
         table = Table(name, num_columns, key_index)
         self.tables[name] = table
