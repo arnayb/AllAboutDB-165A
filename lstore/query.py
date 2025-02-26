@@ -1,9 +1,10 @@
-from .table import Record
+from .table import Record,thread_pool
 from .config import (
     INDIRECTION_COLUMN,
     RID_COLUMN,
     TIMESTAMP_COLUMN,
-    SCHEMA_ENCODING_COLUMN
+    SCHEMA_ENCODING_COLUMN,
+    MAX_VERSIONS
 )
 from time import time
 
@@ -90,32 +91,32 @@ class Query:
         
         records = []
         for bid in bids:
-          base_idx, base_pos = self.table.page_directory[bid]
-          key = self.table.read_base_page(self.table.key, base_idx, base_pos)
-          col = []
-          rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
-          
-          # backtrack until the rid = bid or reached wanted version
-          while rid & 1 and relative_version < 0:
-              relative_version += 1
-              tail_idx, tail_pos = self.table.page_directory[rid]
-              rid = self.table.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
-              
-          if rid & 1:
-              tail_idx, tail_pos = self.table.page_directory[rid]
-              for i in range(self.table.num_columns):
-                  if projected_columns_index[i] != 1:
-                      continue
-                  col.append(self.table.read_tail_page(i, tail_idx, tail_pos))
-          else:
-              for i in range(self.table.num_columns):
-                  if projected_columns_index[i] != 1:
-                      continue
-                  col.append(self.table.read_base_page(i, base_idx, base_pos))
-          records.append(Record(rid, key, col))
-              
+            base_idx, base_pos = self.table.page_directory[bid]
+            key = self.table.read_base_page(self.table.key, base_idx, base_pos)
+            col = []
+            rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
+            
+            # backtrack until the rid = bid or reached wanted version
+            while rid & 1 and relative_version < 0:
+                relative_version += 1
+                tail_idx, tail_pos = self.table.page_directory[rid]
+                rid = self.table.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+                
+            if rid & 1:
+                tail_idx, tail_pos = self.table.page_directory[rid]
+                for i in range(self.table.num_columns):
+                    if projected_columns_index[i] != 1:
+                        continue
+                    col.append(self.table.read_tail_page(i, tail_idx, tail_pos))
+            else:
+                for i in range(self.table.num_columns):
+                    if projected_columns_index[i] != 1:
+                        continue
+                    col.append(self.table.read_base_page(i, base_idx, base_pos))
+            records.append(Record(rid, key, col))
+                
         return records
-    
+
 
     
     """
