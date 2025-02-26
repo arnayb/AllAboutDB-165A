@@ -42,22 +42,29 @@ class Index:
     """
     def create_index(self, column_number):
         self.indices[column_number] = OOBTree()
-        for base_page in self.table.base_pages:
-          for i in range(base_page.num_records):
-              # Need to check if it's deleted - not implemented yet
-              modified = (base_page.columns[SCHEMA_ENCODING_COLUMN].read(i) >> column_number) & 1
-              if modified:
-                  tid = base_page.columns[INDIRECTION_COLUMN].read(i)
-                  tail_idx, tail_pos = self.table.page_directory[tid]
-                  value = self.table.read_tail_page(column_number, tail_idx, tail_pos)
-                  rid = tid
-              else:
-                  rid = base_page.columns[RID_COLUMN].read(i)
-              
-              if value in self.indices[column_number]:
-                  self.indices[column_number][value].append(rid)
-              else:
-                  self.indices[column_number][value] = [rid]
+        for base_page_idx, base_page in enumerate(self.table.base_pages):
+            for i in range(base_page.num_records):
+                # Check if the record has been modified
+                schema_encoding = base_page.columns[SCHEMA_ENCODING_COLUMN].read(i)
+                modified = (schema_encoding >> column_number) & 1
+                
+                # Get the record ID
+                rid = base_page.columns[RID_COLUMN].read(i)
+                
+                # Get the value for this column
+                if modified:
+                    tid = base_page.columns[INDIRECTION_COLUMN].read(i)
+                    tail_idx, tail_pos = self.table.page_directory[tid]
+                    value = self.table.read_tail_page(column_number, tail_idx, tail_pos)
+                else:
+                    # Read directly from the base page if not modified
+                    value = base_page.columns[column_number].read(i)
+                
+                # Add to the index
+                if value in self.indices[column_number]:
+                    self.indices[column_number][value].append(rid)
+                else:
+                    self.indices[column_number][value] = [rid]
 
 
     """

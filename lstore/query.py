@@ -90,6 +90,12 @@ class Query:
     def select_version(self, search_key, search_key_index, projected_columns_index, relative_version):
         bids = self.table.index.locate(search_key_index, search_key)
         
+        if self.table.should_merge():
+            self.table.merge()
+
+        if len(bids) == 0:
+            return False
+        
         records = []
         for bid in bids:
             base_idx, base_pos = self.table.page_directory[bid]
@@ -176,6 +182,7 @@ class Query:
         self.table.page_directory[tid] = [self.table.num_tail_pages - 1, self.table.tail_pages[-1].num_records]
         self.table.tid_counter += 2
         self.table.tail_pages[-1].num_records += 1
+        self.table.updates += 1
         return True
 
     
@@ -205,6 +212,10 @@ class Query:
         bids = self.table.index.locate_range(start_range, end_range, self.table.key)
         if len(bids) == 0:
             return False
+        
+        if self.table.should_merge():
+            self.table.merge()
+            
         for bid in bids:
           bid = bid[0]
           ver = relative_version
