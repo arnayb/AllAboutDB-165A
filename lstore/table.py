@@ -62,6 +62,7 @@ class Table:
         self.tid_counter = 1
         self.dirty_base_pages = set()
         self.dirty_tail_pages = set()
+        self.updates = 0
     def new_base_page(self):
         self.num_base_pages += 1
         self.base_pages.append(LogicalPage(self))
@@ -174,6 +175,19 @@ class Table:
                 if self.index.indices[col_idx] is not None:
                     self.index.drop_index(col_idx)
                     self.index.create_index(col_idx)
+
+        self.updates = 0
         
         print(f"Merge completed: {merge_count} records updated")
         return
+    
+    def should_merge(self):
+        base_records = sum(page.num_records for page in self.base_pages)
+
+        avg_chain_length = self.updates / base_records if base_records> 0 else 0
+        
+        ### Threshold for deciding to merge ###
+        AVG_CHAIN_LENGTH_THRESHOLD = 2.0  # Average chain length
+        
+        # Decide based on update chains
+        return avg_chain_length > AVG_CHAIN_LENGTH_THRESHOLD
