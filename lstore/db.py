@@ -29,6 +29,8 @@ class Database():
                 base_path = os.path.join(tablepath, f"base_{index}")
                 base_page = LogicalPage(table)
                 for col_index in range(table.num_columns + 4): 
+                    if col_index == len(numrecords_list):
+                        pdb.set_trace()
                     numrecords = numrecords_list[col_index]
                     if os.path.exists(base_path):
                         page_filepath = os.path.join(base_path, f"page_{col_index}.dat")
@@ -84,13 +86,13 @@ class Database():
                     os.makedirs(colpath)
                 for page_index, page in enumerate(base_page.columns):
                     if page.is_dirty:
-                      page_filename = os.path.join(colpath, f"page_{page_index}.dat")
-                      pkl_filename = os.path.join(colpath, f"page_{page_index}.pkl")
-                      with open(page_filename, "wb") as f:
-                          f.write(page.data)  # Write the raw byte data from the page object
-                      with open(pkl_filename, "wb") as f:
-                          pickle.dump(page.num_records, f)
-                      page.is_dirty = False 
+                        page_filename = os.path.join(colpath, f"page_{page_index}.dat")
+                        pkl_filename = os.path.join(colpath, f"page_{page_index}.pkl")
+                        with open(page_filename, "wb") as f:
+                            f.write(page.data)  # Write the raw byte data from the page object
+                        with open(pkl_filename, "wb") as f:
+                            pickle.dump(page.num_records, f)
+                        page.is_dirty = False 
             for index in range(0,self.tables[table].num_tail_pages):
                 tail_page = self.tables[table].tail_pages[index]
                 colpath = os.path.join(tablepath, f"tail_{index}")
@@ -98,15 +100,15 @@ class Database():
                     os.makedirs(colpath)
                 for page_index, page in enumerate(tail_page.columns):
                     if page.is_dirty:
-                      page_filename = os.path.join(colpath, f"page_{page_index}.dat")
-                      pkl_filename = os.path.join(colpath, f"page_{page_index}.pkl")
-                      with open(page_filename, "wb") as f:
-                          f.write(page.data)  # Write the raw byte data from the page object
-                      with open(pkl_filename, "wb") as f:
-                          pickle.dump(page.num_records, f)
-                      page.is_dirty = False 
-            table.dirty_base_pages.clear()
-            table.dirty_tail_pages.clear()
+                        page_filename = os.path.join(colpath, f"page_{page_index}.dat")
+                        pkl_filename = os.path.join(colpath, f"page_{page_index}.pkl")
+                        with open(page_filename, "wb") as f:
+                            f.write(page.data)  # Write the raw byte data from the page object
+                        with open(pkl_filename, "wb") as f:
+                            pickle.dump(page.num_records, f)
+                        page.is_dirty = False 
+            self.tables[table].dirty_base_pages.clear()
+            self.tables[table].dirty_tail_pages.clear()
             self.save_table(table)  
     def save_table(self, table_name): #this saves the nonbase/tailpages
         table = self.tables[table_name].get_table_stats()

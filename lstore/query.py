@@ -57,6 +57,7 @@ class Query:
         self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0)
         self.table.write_base_page(RID_COLUMN, bid)
         self.table.write_base_page(INDIRECTION_COLUMN, bid) # point to itself first
+        self.table.write_base_page(TIMESTAMP_COLUMN, 0)
         self.table.page_directory[bid] = [self.table.num_base_pages - 1, self.table.base_pages[-1].num_records]  # Position in Base Page
         self.table.base_pages[-1].num_records += 1
 
@@ -170,6 +171,8 @@ class Query:
         self.table.write_tail_page(INDIRECTION_COLUMN, self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos))
         self.table.write_base_page(INDIRECTION_COLUMN, tid, base_idx, base_pos)
         self.table.write_tail_page(RID_COLUMN, tid)
+        self.table.write_tail_page(TIMESTAMP_COLUMN, 0)
+        self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, 0)
         self.table.page_directory[tid] = [self.table.num_tail_pages - 1, self.table.tail_pages[-1].num_records]
         self.table.tid_counter += 2
         self.table.tail_pages[-1].num_records += 1
