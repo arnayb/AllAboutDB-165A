@@ -11,7 +11,8 @@ db.open('./ECS165')
 #   The second argument is the number of columns
 #   The third argument is determining the which columns will be primay key
 #       Here the first column would be student id and primary key
-grades_table = db.tables["Grades"]
+grades_table = db.create_table('Grades', 5, 0)
+#grades_table = db.tables["Grades"]
 
 # create a query class for the grades table
 query = Query(grades_table)
@@ -45,6 +46,41 @@ for key in keys:
         pass
         # print('select on', key, ':', record)
 print("Select finished")
+# x update on every column
+for _ in range(number_of_updates):
+    for key in keys:
+        updated_columns = [None, None, None, None, None]
+        # copy record to check
+        original = records[key].copy()
+        for i in range(2, grades_table.num_columns):
+            # updated value
+            value = randint(0, 20)
+            updated_columns[i] = value
+            # update our test directory
+            records[key][i] = value
+        query.update(key, *updated_columns)
+        record = query.select(key, 0, [1, 1, 1, 1, 1])[0]
+        error = False
+        for j, column in enumerate(record.columns):
+            if column != records[key][j]:
+                error = True
+        if error:
+            print('update error on', original, 'and', updated_columns, ':', record, ', correct:', records[key])
+        else:
+            pass
+            # print('update on', original, 'and', updated_columns, ':', record)
+print("Update finished")
+
+for i in range(0, number_of_aggregates):
+    r = sorted(sample(range(0, len(keys)), 2))
+    column_sum = sum(map(lambda key: records[key][0], keys[r[0]: r[1] + 1]))
+    result = query.sum(keys[r[0]], keys[r[1]], 0)
+    if column_sum != result:
+        print('sum error on [', keys[r[0]], ',', keys[r[1]], ']: ', result, ', correct: ', column_sum)
+    else:
+        pass
+        # print('sum on [', keys[r[0]], ',', keys[r[1]], ']: ', column_sum)
+print("Aggregate finished")
 
 db.close()
 
