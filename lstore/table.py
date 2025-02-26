@@ -11,7 +11,6 @@ from .config import (
 )
 import concurrent.futures
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)#max 10 threads
-class Record:
 
 class Record:
     def __init__(self, rid, key, columns):
@@ -95,7 +94,9 @@ class Table:
         self.tid_counter = 1
         self.dirty_base_pages = set()
         self.dirty_tail_pages = set()
+
         self.updates = 0
+        self.merge_in_progress = False
         
     def new_base_page(self):
         self.num_base_pages += 1
@@ -177,80 +178,128 @@ class Table:
 
 
     def merge(self):
+        if hasattr(self, 'merge_in_progress') and self.merge_in_progress:
+            return False
+    
+        self.merge_in_progress = True
+        merge_future = thread_pool.submit(self._merge_worker)
+        merge_future.add_done_callback(self._merge_completed)
+
+        return True
+    
+    def _merge_worker(self, future):
         print("Merge started")
         processed_bids = set()
         merge_count = 0
 
-        # For each base page
-        for base_idx in range(self.num_base_pages):
-            base_page = self.base_pages[base_idx]
-            # For each record in the base page
-            for base_pos in range(base_page.num_records):
-                # Read metadata using the methods that handle locking internally
-                bid = self.read_base_page(RID_COLUMN, base_idx, base_pos)
-                indirection = self.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
-                schema_encoding = self.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
+        copy_base_pages = copy.deepcopy(self.base_pages)
+        copy_page_directory = copy.deepcopy(self.page_directory)
+        
+        base_updates = []  # [(base_idx, base_pos, col_idx, value), ...]
+        
+        # for each base page in our snapshot
+        for base_idx in range(len(copy_base_pages)):
+            base_page = copy_base_pages[base_idx]
+            if base_page is None:
+                continue
                 
-                if bid in processed_bids or indirection == bid:
-                    continue
+            # for each record in the base page
+            for base_pos in range(base_page.num_records):
+                try:
+                    # read values from the copy to avoid locking
+                    bid = base_page.columns[RID_COLUMN].read(base_pos)
+                    indirection = base_page.columns[INDIRECTION_COLUMN].read(base_pos)
+                    schema_encoding = base_page.columns[SCHEMA_ENCODING_COLUMN].read(base_pos)
                     
-                if indirection & 1: 
-                    update_count = 0
-                    current_rid = indirection
-                    tail_values = [None] * self.num_columns
-                    latest_timestamp = None
+                    if bid in processed_bids or indirection == bid:
+                        continue
                     
-                    # Process tail chain
-                    while current_rid & 1:
-                        try:
-                            tail_idx, tail_pos = self.page_directory[current_rid]
-                            # Get the timestamp from the most recent tail record
-                            tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
-                            if latest_timestamp is None or tail_timestamp > latest_timestamp:
-                                latest_timestamp = tail_timestamp
+                    if indirection & 1:  # check if indirection points to a tail record
+                        update_count = 0
+                        current_rid = indirection
+                        tail_values = [None] * self.num_columns
+                        latest_timestamp = None
+                        
+                        while current_rid & 1:
+                            try:
+                                if current_rid not in copy_page_directory:
+                                    break
+                                    
+                                tail_idx, tail_pos = copy_page_directory[current_rid]
                                 
-                            for col_idx in range(self.num_columns):
-                                if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
-                                    tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
-                            current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
-                            update_count += 1
-                        except Exception as e:
-                            print(f"Error processing tail record: {e}")
-                            break
-                    
-                    # Write updates
-                    if update_count > 0:
-                        try:
+                                if tail_idx >= len(self.tail_pages):
+                                    break
+                                    
+                                # use the thread-safe read method for the real data
+                                tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
+                                
+                                if latest_timestamp is None or tail_timestamp > latest_timestamp:
+                                    latest_timestamp = tail_timestamp
+                                    
+                                for col_idx in range(self.num_columns):
+                                    if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
+                                        tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
+                                        
+                                current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+                                update_count += 1
+                                
+                            except Exception as e:
+                                print(f"Error processing tail record: {e}")
+                                break
+                        
+                        # updates for application
+                        if update_count > 0:
                             for col_idx in range(self.num_columns):
                                 if tail_values[col_idx] is not None:
-                                    self.write_base_page(col_idx, tail_values[col_idx], base_idx, base_pos)
+                                    base_updates.append((base_idx, base_pos, col_idx, tail_values[col_idx]))
                             
-                            # Reset metadata
-                            self.write_base_page(SCHEMA_ENCODING_COLUMN, 0, base_idx, base_pos)
-                            self.write_base_page(INDIRECTION_COLUMN, bid, base_idx, base_pos)
+                            # metadata updates
+                            base_updates.append((base_idx, base_pos, SCHEMA_ENCODING_COLUMN, 0))
+                            base_updates.append((base_idx, base_pos, INDIRECTION_COLUMN, bid))
                             
-                            # Use the latest timestamp from the tail records instead of generating a new one
                             if latest_timestamp is not None:
-                                self.write_base_page(TIMESTAMP_COLUMN, latest_timestamp, base_idx, base_pos)
+                                base_updates.append((base_idx, base_pos, TIMESTAMP_COLUMN, latest_timestamp))
                             
                             processed_bids.add(bid)
                             merge_count += 1
-                        except Exception as e:
-                            print(f"Error merging record {bid}: {e}")
+                except Exception as e:
+                    print(f"Error processing base record: {e}")
         
-        # Rebuild indices if needed
-        if merge_count > 0:
-            for col_idx in range(self.num_columns):
-                if self.index.indices[col_idx] is not None:
-                    self.index.drop_index(col_idx)
-                    self.index.create_index(col_idx)
-
-        self.updates = 0
+        # Return the prepared updates to be applied by the main thread
+        return base_updates, merge_count
+    
+    def _merge_completed(self, future):
+        try:
+            # completed future result
+            base_updates, merge_count = future.result()
+            
+            # apply updates atomically on the main thread
+            for base_idx, base_pos, col_idx, value in base_updates:
+                self.write_base_page(col_idx, value, base_idx, base_pos)
+            
+            # reset updates counter
+            self.updates = 0
+            
+            print(f"Background merge completed: {merge_count} records updated")
+            
+            # rebuild indices if needed
+            if merge_count > 0:
+                for col_idx in range(self.num_columns):
+                    if self.index.indices[col_idx] is not None:
+                        self.index.drop_index(col_idx)
+                        self.index.create_index(col_idx)
         
-        print(f"Merge completed: {merge_count} records updated")
-        return
+        except Exception as e:
+            print(f"Error in merge completion: {e}")
+        
+        finally:
+            # reset merge flag
+            self.merge_in_progress = False
     
     def should_merge(self):
+        if hasattr(self, 'merge_in_progress') and self.merge_in_progress:
+            return False
+
         base_records = sum(page.num_records for page in self.base_pages)
 
         avg_chain_length = self.updates / base_records if base_records> 0 else 0
@@ -258,5 +307,5 @@ class Table:
         ### Threshold for deciding to merge ###
         AVG_CHAIN_LENGTH_THRESHOLD = 2.0  # Average chain length
         
-        # Decide based on update chains
+        # decide based on update chains
         return avg_chain_length > AVG_CHAIN_LENGTH_THRESHOLD
