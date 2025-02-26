@@ -2,13 +2,26 @@ from .index import Index
 from .page import Page
 from time import time
 
-class Record:
 
+class Record:
     def __init__(self, rid, key, columns):
         self.rid = rid
         self.key = key
         self.columns = columns
 
+class PageRange:
+    """Organizes multiple LogicalPages into a range."""
+    def __init__(self, range_id):
+        self.range_id = range_id
+        self.pages = []  # Stores LogicalPages
+
+    def add_page(self, logical_page):
+        """Adds a LogicalPage to this Page Range."""
+        self.pages.append(logical_page)
+
+    def get_pages(self):
+        """Returns all LogicalPages in this range."""
+        return self.pages
 class LogicalPage:
     
     def __init__(self, table):
@@ -46,6 +59,22 @@ class Table:
         self.bid_counter = 0
         self.tid_counter = 1
 
+       #initialize page_ranges
+        # store page range objects / page range creation
+        self.page_ranges = []
+        self.create_page_range()
+
+    def create_page_range(self):
+        #Create pr add to the table
+        new_range = PageRange(len(self.page_ranges))
+        self.page_ranges.append(new_range)
+
+    def assign_page_to_range(self, page):
+        #Assigns a page to the most recent pr
+        if not self.page_ranges:
+            self.create_page_range()
+        self.page_ranges[-1].add_page(page)  # Add page to latest range
+
     def read_base_page(self, col_idx, base_idx, base_pos):
         return self.base_pages[base_idx].columns[col_idx].read(base_pos)
 
@@ -70,4 +99,3 @@ class Table:
     def __merge(self):
         print("merge is happening")
         pass
-
