@@ -45,6 +45,9 @@ class Table:
         self.index.create_index(key)
         self.bid_counter = 0
         self.tid_counter = 1
+        #tracking dirty pages
+        self.dirty_base_pages = set()
+        self.dirty_tail_pages = set()
 
     def read_base_page(self, col_idx, base_idx, base_pos):
         return self.base_pages[base_idx].columns[col_idx].read(base_pos)
@@ -56,8 +59,12 @@ class Table:
         if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
             self.num_base_pages += 1
             self.base_pages.append(LogicalPage(self))
-        
-        self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+
+        current_value = self.base_pages[base_idx].columns[col_idx].read(base_pos)
+        if current_value != value:
+            self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+            #mark as dirty
+            self.dirty_base_pages.add((base_idx, col_idx))
     
     def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
         if self.num_tail_pages == 0 or \
@@ -65,7 +72,11 @@ class Table:
             self.num_tail_pages += 1
             self.tail_pages.append(LogicalPage(self))
         
-        self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
+        current_value = self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+        if current_value != value:
+            self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
+            # Mark as dirty
+            self.dirty_tail_pages.add((tail_idx, col_idx))
 
     def __merge(self):
         print("merge is happening")
