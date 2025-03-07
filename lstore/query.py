@@ -30,8 +30,8 @@ class Query:
             return False
 
         # Need to decide which value to use logical delete
-        # base_idx, base_pos = self.table.page_directory[bid]
-        # self.table.write_base_page(INDIRECTION_COLUMN, <logical delete>, base_idx, base_pos)
+        #base_idx, base_pos = self.table.page_directory[bid]
+        #self.table.write_base_page(INDIRECTION_COLUMN, -1, base_idx, base_pos)
 
         del self.table.index.indices[self.table.key][primary_key]
         return True
@@ -94,7 +94,7 @@ class Query:
             self.table.merge()
 
         if len(bids) == 0:
-            return False
+            return []
         
         records = []
         for bid in bids:
@@ -137,8 +137,10 @@ class Query:
             return False
         
         record_index = self.table.index.locate(self.table.key, primary_key)
-        if not record_index:  # If no record found
-            return False
+        if len(record_index) == 0:  
+            if None not in columns:
+                return self.insert(*columns)
+            return False 
 
         bid = record_index[0]
 
