@@ -24,20 +24,49 @@ class Transaction:
         
     # If you choose to implement this differently this method must still return True if transaction commits or False on abort
     def run(self):
-        for query, args in self.queries:
-            result = query(*args)
-            # If the query has failed the transaction should abort
-            if result == False:
-                return self.abort()
-        return self.commit()
+       acquired_locks = []  #tracking the acquired locks for release
+        rollback_data = []  # tracking for rollback
+
+        try:
+            for query, table, args in self.queries:
+                record_id = args[0]  
+
+                # acquiring the 2PL lock
+                if not lock_manager.acquire(record_id, "WRITE"):
+                    raise Exception("Lock acquisition failed")  # failed to acquire a lock, triggeing rollback
+
+                acquired_locks.append(record_id)  
+
+                # storing the original data for rollback
+                old_record = table.select(record_id, table.key, [1] * table.num_columns)
+                if old_record:
+                    rollback_data.append((table, record_id, old_record))
+
+                result = query(*args)
+                if not result:
+                    raise Exception("Query execution failed")  # rollback
+
+            return self.commit(acquired_locks)  # Commit if all queries succeed
+
+        except Exception:
+            return self.abort(acquired_locks, rollback_data)  
 
     
     def abort(self):
-        #TODO: do roll-back and any other necessary operations
-        return False
+        # roll-back + releasing the acquired locks
+        for table, record_id, old_data in rollback_data:
+            table.update(record_id, *old_data)  # restoring the original values
+
+        for record_id in acquired_locks:
+            lock_manager.release(record_id)  # releasing
+
+        return False  # indicating failure
 
     
     def commit(self):
-        # TODO: commit to database
-        return True
+        # commit + releasing all acquired locks
+        for record_id in acquired_locks:
+            lock_manager.release(record_id)  
+
+        return True  # indicating success
 
