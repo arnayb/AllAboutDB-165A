@@ -12,6 +12,38 @@ from .config import (
 import concurrent.futures
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)#max 10 threads
 
+class ReadWriteLockNoWait:
+    def __init__(self):
+        self.readers = 0  # Number of active readers
+        self.writer = False  # Whether a writer is active
+        self.lock = threading.Lock()  # Mutex for modifying counters
+
+    def try_acquire_read(self):
+        """Try to acquire a read lock. If a writer is active, return False immediately."""
+        with self.lock:
+            if self.writer:
+                return False  # Writer is active, cannot acquire read lock
+            self.readers += 1
+            return True  # Successfully acquired read lock
+
+    def release_read(self):
+        """Release a read lock."""
+        with self.lock:
+            self.readers -= 1
+
+    def try_acquire_write(self):
+        """Try to acquire a write lock. If readers or another writer exists, return False immediately."""
+        with self.lock:
+            if self.writer or self.readers > 0:
+                return False  # Cannot acquire lock, return immediately
+            self.writer = True
+            return True  # Successfully acquired write lock
+
+    def release_write(self):
+        """Release the write lock."""
+        with self.lock:
+            self.writer = False
+
 class Record:
     def __init__(self, rid, key, columns):
         self.rid = rid
@@ -85,6 +117,7 @@ class Table:
         self.num_columns = num_columns
         self.page_directory = {}
         self.index = Index(self)
+        self.lock_map = {}
         self.num_base_pages = 1
         self.num_tail_pages = 0
         self.base_pages = [LogicalPage(self)]
@@ -164,6 +197,7 @@ class Table:
             self.dirty_tail_pages.add((tail_idx, col_idx))
 
     def get_table_stats(self):#for getting table metadata to save
+        self.lock_map = {}
         state = self.__dict__.copy()
 
         state.pop("base_pages", None)
