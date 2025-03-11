@@ -111,12 +111,15 @@ class Database():
             self.tables[table].dirty_tail_pages.clear()
             self.save_table(table)  
     def save_table(self, table_name): #this saves the nonbase/tailpages
-        self.tables[table_name].lock_map = {}
-        table = self.tables[table_name].get_table_stats()
-        pdb.set_trace()
-        table_filename = os.path.join(self.path, table_name,  f"{table_name}.pkl")
-        with open(table_filename, "wb") as f:
-            pickle.dump(table, f)
+        try:
+            self.tables[table_name].lock_map = {}
+            table_save = self.tables[table_name].get_table_stats()
+            table_filename = os.path.join(self.path, table_name,  f"{table_name}.pkl")
+            with open(table_filename, "wb") as f:
+                pickle.dump(table_save, f)
+        except TypeError as e:
+            # Catch TypeError if there is a threading lock that cannot be pickled
+            print(f"Error caught while saving table {table_name}: {e}")
     def load_table(self, table_name):
         table_filename = os.path.join(self.path, table_name, f"{table_name}.pkl")
         with open(table_filename, "rb") as f:

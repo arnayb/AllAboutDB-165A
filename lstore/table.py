@@ -210,14 +210,6 @@ class Table:
             'updates': self.updates
         }
         self.lock_map = {}
-        state = self.__dict__.copy()
-        for key, value in state["lock_map"].items():
-            if isinstance(value, (threading.Lock, threading.RLock)):
-                print(f"⚠️ LOCK FOUND in lock_map[{key}] = {value}")
-            elif hasattr(value, "__dict__"):
-                for attr_name, attr_value in vars(value).items():
-                    if isinstance(attr_value, (threading.Lock, threading.RLock)):
-                        print(f"⚠️ LOCK FOUND inside lock_map[{key}].{attr_name} = {attr_value}")
         return state
       
     def restore_from_state(self, state):
