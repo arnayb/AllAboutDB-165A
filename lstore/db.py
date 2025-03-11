@@ -1,9 +1,9 @@
-from .table import Table, LogicalPage
+from .table import Table, LogicalPage, ReadWriteLockNoWait
 import os
 import pickle
 from .page import Page
 import pdb
-
+import threading
 class Database():
 
     def __init__(self):
@@ -29,8 +29,6 @@ class Database():
                 base_path = os.path.join(tablepath, f"base_{index}")
                 base_page = LogicalPage(table)
                 for col_index in range(table.num_columns + 4): 
-                    if col_index == len(numrecords_list):
-                        pdb.set_trace()
                     numrecords = numrecords_list[col_index]
                     if os.path.exists(base_path):
                         page_filepath = os.path.join(base_path, f"page_{col_index}.dat")
@@ -41,7 +39,9 @@ class Database():
                             page.data = page_data 
                             page.num_records = numrecords
                             base_page.columns[col_index]=page
-
+                for x in range (0,numrecords_list[table.key]):
+                    table.lock_map[base_page.columns[table.key].read(x)] = ReadWriteLockNoWait()
+                    #this populates the lock_map
                 base_page.num_records = max(numrecords_list)
                 table.base_pages.append(base_page)
 
@@ -64,7 +64,6 @@ class Database():
                 tail_page.num_records = max(numrecords_list)
                 table.tail_pages.append(tail_page)
             self.tables[table_name] = table
-
             
 
     
@@ -74,6 +73,7 @@ class Database():
         if not os.path.exists(self.path):
             os.makedirs(self.path)
         for table in self.tables:
+            self.tables[table].lock_maps = {}
             tablepath = os.path.join(self.path, self.tables[table].name)
             if not os.path.exists(tablepath):
                 os.makedirs(tablepath)
@@ -111,11 +111,12 @@ class Database():
             self.tables[table].dirty_tail_pages.clear()
             self.save_table(table)  
     def save_table(self, table_name): #this saves the nonbase/tailpages
+        self.tables[table_name].lock_map = {}
         table = self.tables[table_name].get_table_stats()
+        pdb.set_trace()
         table_filename = os.path.join(self.path, table_name,  f"{table_name}.pkl")
         with open(table_filename, "wb") as f:
             pickle.dump(table, f)
-        
     def load_table(self, table_name):
         table_filename = os.path.join(self.path, table_name, f"{table_name}.pkl")
         with open(table_filename, "rb") as f:

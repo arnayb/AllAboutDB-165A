@@ -197,11 +197,27 @@ class Table:
             self.dirty_tail_pages.add((tail_idx, col_idx))
 
     def get_table_stats(self):#for getting table metadata to save
+        state = {
+            'name': self.name,
+            'key': self.key,
+            'num_columns': self.num_columns,
+            'tid_counter': self.tid_counter,
+            'bid_counter': self.bid_counter,
+            'page_directory': self.page_directory,  # You might want to exclude or serialize this based on its contents
+            'index': self.index,  # This might need to be serialized separately, depending on its structure
+            'num_base_pages': self.num_base_pages,
+            'num_tail_pages': self.num_tail_pages,
+            'updates': self.updates
+        }
         self.lock_map = {}
         state = self.__dict__.copy()
-
-        state.pop("base_pages", None)
-        state.pop("tail_pages", None)
+        for key, value in state["lock_map"].items():
+            if isinstance(value, (threading.Lock, threading.RLock)):
+                print(f"⚠️ LOCK FOUND in lock_map[{key}] = {value}")
+            elif hasattr(value, "__dict__"):
+                for attr_name, attr_value in vars(value).items():
+                    if isinstance(attr_value, (threading.Lock, threading.RLock)):
+                        print(f"⚠️ LOCK FOUND inside lock_map[{key}].{attr_name} = {attr_value}")
         return state
       
     def restore_from_state(self, state):
