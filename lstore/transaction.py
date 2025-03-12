@@ -1,5 +1,13 @@
 from lstore.table import Table, Record
 from lstore.index import Index
+import threading
+
+
+
+#Global hashmap for locking
+lock_table = {}  # { rid: threading.Lock() }
+lock_table_lock = threading.Lock()  
+
 
 class Transaction:
 
@@ -8,7 +16,7 @@ class Transaction:
     """
     def __init__(self):
         self.queries = []
-        pass
+        self.rollback_data = [] #storing data for rollback
 
     """
     # Adds the given query to this transaction
@@ -18,55 +26,71 @@ class Transaction:
     # t.add_query(q.update, grades_table, 0, *[None, 1, None, 2, None])
     """
     def add_query(self, query, table, *args):
-        self.queries.append((query, args))
-        # use grades_table for aborting
+        self.queries.append((query, table, args))
+       
 
-        
     # If you choose to implement this differently this method must still return True if transaction commits or False on abort
     def run(self):
-       acquired_locks = []  #tracking the acquired locks for release
-        rollback_data = []  # tracking for rollback
+        MAX_RETRIES = 5
+        retries = 0
+        acquired_locks = [] #storing acquired locks
 
-        try:
-            for query, table, args in self.queries:
-                record_id = args[0]  
+        while retries <= MAX_RETRIES:
+            self.rollback_data.clear()
+            acquired_locks.clear()
 
-                # acquiring the 2PL lock
-                if not lock_manager.acquire(record_id, "WRITE"):
-                    raise Exception("Lock acquisition failed")  # failed to acquire a lock, triggeing rollback
+            try:
+                for query, table, args in self.queries:
+                    primary_key = args[0]
+                    rid = table.page_directory.get(primary_key)
+                    if rid is None:
+                        raise Exception()
 
-                acquired_locks.append(record_id)  
+                    # acquiring the lock
+                    with lock_table_lock:
+                        if rid not in lock_table:
+                            lock_table[rid] = threading.Lock()
 
-                # storing the original data for rollback
-                old_record = table.select(record_id, table.key, [1] * table.num_columns)
-                if old_record:
-                    rollback_data.append((table, record_id, old_record))
+                    if not lock_table[rid].acquire(blocking=False):
+                        raise Exception()
 
-                result = query(*args)
-                if not result:
-                    raise Exception("Query execution failed")  # rollback
+                    acquired_locks.append(rid)
 
-            return self.commit(acquired_locks)  # Commit if all queries succeed
+                    # for saving the rollback data
+                    old_record = table.select(primary_key, table.key, [1] * table.num_columns)
+                    if old_record:
+                        self.rollback_data.append((table, rid, old_record))
 
-        except Exception:
-            return self.abort(acquired_locks, rollback_data)  
+                    
+                    result = query(*args)
+                    if not result:
+                        raise Exception()
 
+                return self.commit(acquired_locks)
+
+            except Exception:
+                retries += 1
+                self.abort(acquired_locks)
+
+        return False
+        
+  
     
     def abort(self):
         # roll-back + releasing the acquired locks
-        for table, record_id, old_data in rollback_data:
-            table.update(record_id, *old_data)  # restoring the original values
+        for table, rid, old_data in self.rollback_data:
+            table.update(rid, *old_data) #restoring original values
 
-        for record_id in acquired_locks:
-            lock_manager.release(record_id)  # releasing
+        for rid in acquired_locks:
+            lock_table[rid].release() #releasing
 
         return False  # indicating failure
 
     
     def commit(self):
         # commit + releasing all acquired locks
-        for record_id in acquired_locks:
-            lock_manager.release(record_id)  
+        for rid in acquired_locks:
+            lock_table[rid].release()  
 
         return True  # indicating success
 
