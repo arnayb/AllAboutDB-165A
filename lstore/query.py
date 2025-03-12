@@ -1,4 +1,4 @@
-from .table import Record,thread_pool
+from .table import Record,ReadWriteLockNoWait,thread_pool
 from .config import (
     INDIRECTION_COLUMN,
     RID_COLUMN,
@@ -49,7 +49,7 @@ class Query:
         key_col = self.table.key
         if self.table.index.locate(key_col, columns[key_col]):
             return False
-
+        self.table.lock_map[columns[key_col]] = ReadWriteLockNoWait()
         for index, value in enumerate(columns):
             self.table.write_base_page(index, value)
         self.table.index.indices[key_col][columns[key_col]] = [bid]
@@ -100,6 +100,8 @@ class Query:
         for bid in bids:
             base_idx, base_pos = self.table.page_directory[bid]
             key = self.table.read_base_page(self.table.key, base_idx, base_pos)
+            if not self.table.lock_map[key].try_acquire_read():
+                return False
             col = []
             rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             
@@ -121,7 +123,7 @@ class Query:
                         continue
                     col.append(self.table.read_base_page(i, base_idx, base_pos))
             records.append(Record(rid, key, col))
-                
+            self.table.lock_map[key].release_read()    
         return records
 
 
@@ -155,7 +157,9 @@ class Query:
 
         base_idx, base_pos = self.table.page_directory[bid]
         schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
-        
+        #lock here:
+        if not self.table.lock_map[primary_key].try_acquire_write():
+            return False
         if schema_encoding:
             tid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             tail_idx, tail_pos = self.table.page_directory[tid]
@@ -185,6 +189,7 @@ class Query:
         self.table.tid_counter += 2
         self.table.tail_pages[-1].num_records += 1
         self.table.updates += 1
+        self.table.lock_map[primary_key].release_write()
         return True
 
     
@@ -222,6 +227,9 @@ class Query:
           bid = bid[0]
           ver = relative_version
           base_idx, base_pos = self.table.page_directory[bid]
+          pkey = self.table.read_base_page(self.table.key, base_idx, base_pos)
+          if not self.table.lock_map[pkey].try_acquire_read():
+              return False
           rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
           # backtrack until the rid = bid or reached wanted version
           while rid & 1 and ver < 0:
@@ -234,7 +242,7 @@ class Query:
               total += self.table.read_tail_page(aggregate_column_index, tail_idx, tail_pos)
           else:
               total += self.table.read_base_page(aggregate_column_index, base_idx, base_pos)
-              
+          self.table.lock_map[pkey].release_read()
         return total
 
     
