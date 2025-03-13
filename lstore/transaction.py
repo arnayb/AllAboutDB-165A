@@ -1,12 +1,6 @@
 from lstore.table import Table, Record
 from lstore.index import Index
-import threading
 
-
-
-#Global hashmap for locking
-lock_table = {}  # { rid: threading.Lock() }
-lock_table_lock = threading.Lock()  
 
 
 class Transaction:
@@ -31,66 +25,33 @@ class Transaction:
 
     # If you choose to implement this differently this method must still return True if transaction commits or False on abort
     def run(self):
-        MAX_RETRIES = 5
-        retries = 0
-        acquired_locks = [] #storing acquired locks
 
-        while retries <= MAX_RETRIES:
-            self.rollback_data.clear()
-            acquired_locks.clear()
+        self.rollback_data.clear()
 
-            try:
-                for query, table, args in self.queries:
-                    primary_key = args[0]
-                    rid = table.page_directory.get(primary_key)
-                    if rid is None:
-                        raise Exception()
+        for query, table, args in self.queries:
+            primary_key = args[0]  
 
-                    # acquiring the lock
-                    with lock_table_lock:
-                        if rid not in lock_table:
-                            lock_table[rid] = threading.Lock()
+            # storing the original data for rollback
+            old_record = table.select(primary_key, table.key, [1] * table.num_columns)
+            if old_record:
+                self.rollback_data.append((table, primary_key, old_record))
 
-                    if not lock_table[rid].acquire(blocking=False):
-                        raise Exception()
+            result = query(*args)
+            if not result:
+                return self.abort()  # if query fails abort
 
-                    acquired_locks.append(rid)
+        return self.commit()
 
-                    # for saving the rollback data
-                    old_record = table.select(primary_key, table.key, [1] * table.num_columns)
-                    if old_record:
-                        self.rollback_data.append((table, rid, old_record))
-
-                    
-                    result = query(*args)
-                    if not result:
-                        raise Exception()
-
-                return self.commit(acquired_locks)
-
-            except Exception:
-                retries += 1
-                self.abort(acquired_locks)
-
-        return False
-        
-  
     
     def abort(self):
-        # roll-back + releasing the acquired locks
-        for table, rid, old_data in self.rollback_data:
-            table.update(rid, *old_data) #restoring original values
+        #roll-back, restoring old values
+        for table, primary_key, old_data in self.rollback_data:
+            table.update(primary_key, *old_data)  
 
-        for rid in acquired_locks:
-            lock_table[rid].release() #releasing
+        return False  # indicating that transaction failed
+        
 
-        return False  # indicating failure
-
-    
+    #Commiting the transaction, returning true if the transaction succeeds
     def commit(self):
-        # commit + releasing all acquired locks
-        for rid in acquired_locks:
-            lock_table[rid].release()  
-
         return True  # indicating success
 
