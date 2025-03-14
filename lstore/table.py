@@ -12,6 +12,9 @@ from .config import (
 import concurrent.futures
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)#max 10 threads
 
+from timeit import default_timer as timer
+from decimal import Decimal
+
 class ReadWriteLockNoWait:
     def __init__(self):
         self.readers = 0  # Number of active readers
@@ -156,45 +159,109 @@ class Table:
         self.page_ranges[-1].add_page(page)  # Add page to latest range
 
     def read_base_page(self, col_idx, base_idx, base_pos):
+        # Get the Database instance
+        from .db import db_instance
+        
+        # Try to get the page from buffer pool
+        page = db_instance.get_page_from_bufferpool(self.name, "base", base_idx, col_idx)
+        db_instance.add_page_to_bufferpool(self.name, "base", base_idx, col_idx, page)
+        
+        if page is None:
+            # Page not in buffer pool, load it
+            with self.base_pages[base_idx].PinLock:
+                # Double-check if page is loaded
+                if isinstance(self.base_pages[base_idx].columns[col_idx], Page):
+                    page = self.base_pages[base_idx].columns[col_idx]
+                else:
+                    # Load page from disk
+                    page = db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
+                    self.base_pages[base_idx].columns[col_idx] = page
+        
+        # Read the value
         with self.base_pages[base_idx].PinLock:
-            return self.base_pages[base_idx].columns[col_idx].read(base_pos)
+            return page.read(base_pos)
 
     def read_tail_page(self, col_idx, tail_idx, tail_pos):
+        # Get the Database instance
+        from .db import db_instance
+        
+        # Try to get the page from buffer pool
+        page = db_instance.get_page_from_bufferpool(self.name, "tail", tail_idx, col_idx)
+        db_instance.add_page_to_bufferpool(self.name, "tail", tail_idx, col_idx, page)
+        
+        if page is None:
+            # Page not in buffer pool, load it
+            with self.tail_pages[tail_idx].PinLock:
+                # Double-check if page is loaded
+                if isinstance(self.tail_pages[tail_idx].columns[col_idx], Page):
+                    page = self.tail_pages[tail_idx].columns[col_idx]
+                else:
+                    # Load page from disk
+                    page = db_instance._load_page_if_needed(self.name, "tail", tail_idx, col_idx)
+                    self.tail_pages[tail_idx].columns[col_idx] = page
+    
+        # Read the value
         with self.tail_pages[tail_idx].PinLock:
-            return self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+            return page.read(tail_pos)
 
     def write_base_page(self, col_idx, value, base_idx=-1, base_pos=-1):
+        from .db import db_instance
+        
+        if base_idx == -1:
+            base_idx = self.num_base_pages - 1
+        
         if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
             self.num_base_pages += 1
             self.base_pages.append(LogicalPage(self))
-
-        self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+            base_idx = self.num_base_pages - 1
+        
+        # Get or create the page
+        page = db_instance.get_page_from_bufferpool(self.name, "base", base_idx, col_idx)
+        if page is None:
+            with self.base_pages[base_idx].PinLock:
+                if isinstance(self.base_pages[base_idx].columns[col_idx], Page):
+                    page = self.base_pages[base_idx].columns[col_idx]
+                else:
+                    page = db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
+                    if page is None:
+                        page = Page()
+                    self.base_pages[base_idx].columns[col_idx] = page
+        
+        # Write to the page
+        with self.base_pages[base_idx].PinLock:
+            page.write(value, base_pos)
+            page.is_dirty = True  # Mark the page as dirty
+            # Add or update in buffer pool
+            db_instance.add_page_to_bufferpool(self.name, "base", base_idx, col_idx, page)
 
     def write_tail_page(self, col_idx, value, tail_idx=-1, tail_pos=-1):
-        if self.num_tail_pages == 0 or \
-                (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
+        from .db import db_instance
+        
+        if tail_idx == -1:
+            tail_idx = self.num_tail_pages - 1
+        
+        if self.num_tail_pages == 0 or (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
             self.num_tail_pages += 1
             self.tail_pages.append(LogicalPage(self))
-
-        self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
-
-    '''def __merge(self):
-        print("merge is happening")
-        pass
-      
-            self.new_base_page()
-        with self.base_pages[base_idx].PinLock:
-            self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
-            self.dirty_base_pages.add((base_idx, col_idx))'''
-
-    
-    def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
-        if self.num_tail_pages == 0 or \
-          (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
-            self.new_tail_page()
+            tail_idx = self.num_tail_pages - 1
+        
+        # Get or create the page
+        page = db_instance.get_page_from_bufferpool(self.name, "tail", tail_idx, col_idx)
+        if page is None:
+            with self.tail_pages[tail_idx].PinLock:
+                if isinstance(self.tail_pages[tail_idx].columns[col_idx], Page):
+                    page = self.tail_pages[tail_idx].columns[col_idx]
+                else:
+                    page = db_instance._load_page_if_needed(self.name, "tail", tail_idx, col_idx)
+                    if page is None:
+                        page = Page()
+                    self.tail_pages[tail_idx].columns[col_idx] = page
+        
+        # Write to the page
         with self.tail_pages[tail_idx].PinLock:
-            self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
-            self.dirty_tail_pages.add((tail_idx, col_idx))
+            page.write(value, tail_pos)
+            # Add or update in buffer pool
+            db_instance.add_page_to_bufferpool(self.name, "tail", tail_idx, col_idx, page)
 
     def get_table_stats(self):#for getting table metadata to save
         state = {
@@ -209,7 +276,6 @@ class Table:
             'num_tail_pages': self.num_tail_pages,
             'updates': self.updates
         }
-        self.lock_map = {}
         return state
       
     def restore_from_state(self, state):
@@ -217,16 +283,34 @@ class Table:
         self.__dict__.update(state)
         self.base_pages = []
         self.tail_pages = []
-
+        
+        # Initialize lock_map if it doesn't exist
+        if not hasattr(self, 'lock_map') or self.lock_map is None:
+            self.lock_map = {}
+        
+        # Recreate locks for all keys in the index
+        if hasattr(self, 'index') and hasattr(self.index, 'indices') and self.key in self.index.indices:
+            for key in self.index.indices[self.key]:
+                if key not in self.lock_map:
+                    self.lock_map[key] = ReadWriteLockNoWait()
 
     def merge(self):
         if hasattr(self, 'merge_in_progress') and self.merge_in_progress:
             return False
-    
+        
         self.merge_in_progress = True
-        merge_future = thread_pool.submit(self._merge_worker)
-        merge_future.add_done_callback(self._merge_completed)
-
+        start = timer()
+        
+        def wrapped_merge():
+            return self._merge_worker()  # Make sure to return the result
+        
+        def timing_callback(future):
+            end = timer()
+            print("Merge time: ", Decimal(end - start).quantize(Decimal('0.01')), "seconds")
+            self._merge_completed(future)  # Pass the original future through
+        
+        merge_future = thread_pool.submit(wrapped_merge)
+        merge_future.add_done_callback(timing_callback)
         return True
     
     def _merge_worker(self):
@@ -234,81 +318,119 @@ class Table:
         processed_bids = set()
         merge_count = 0
 
-        copy_base_pages = copy.deepcopy(self.base_pages)
-        copy_page_directory = copy.deepcopy(self.page_directory)
+        # Prefetch all needed pages to buffer pool
+        self._prefetch_pages_for_merge()
+        
+        # Use local variables to avoid attribute lookups
+        base_pages = self.base_pages
+        page_directory = self.page_directory
         
         base_updates = []  # [(base_idx, base_pos, col_idx, value), ...]
         
-        # for each base page in our snapshot
-        for base_idx in range(len(copy_base_pages)):
-            base_page = copy_base_pages[base_idx]
+        # Process base pages in batches
+        batch_size = 100
+        for base_idx in range(len(base_pages)):
+            base_page = base_pages[base_idx]
             if base_page is None:
                 continue
                 
-            # for each record in the base page
-            for base_pos in range(base_page.num_records):
-                try:
-                    # read values from the copy to avoid locking
-                    bid = base_page.columns[RID_COLUMN].read(base_pos)
-                    indirection = base_page.columns[INDIRECTION_COLUMN].read(base_pos)
-                    schema_encoding = base_page.columns[SCHEMA_ENCODING_COLUMN].read(base_pos)
-                    
-                    if bid in processed_bids or indirection == bid:
+            # Process records in batches
+            for batch_start in range(0, base_page.num_records, batch_size):
+                batch_end = min(batch_start + batch_size, base_page.num_records)
+                update_batch = []
+                
+                # First pass: collect all indirection pointers
+                tail_pointers = []
+                for base_pos in range(batch_start, batch_end):
+                    bid = self.read_base_page(RID_COLUMN, base_idx, base_pos)
+                    if bid in processed_bids:
                         continue
+                        
+                    indirection = self.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
+                    if indirection & 1 and indirection != bid:  # Odd RID = tail record
+                        tail_pointers.append((base_pos, bid, indirection))
+                
+                # Second pass: process tail records in batches
+                for base_pos, bid, indirection in tail_pointers:
+                    schema_encoding = self.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
                     
-                    if indirection & 1:  # check if indirection points to a tail record
-                        update_count = 0
-                        current_rid = indirection
-                        tail_values = [None] * self.num_columns
-                        latest_timestamp = None
-                        
-                        while current_rid & 1:
-                            try:
-                                if current_rid not in copy_page_directory:
-                                    break
-                                    
-                                tail_idx, tail_pos = copy_page_directory[current_rid]
-                                
-                                if tail_idx >= len(self.tail_pages):
-                                    break
-                                    
-                                # use the thread-safe read method for the real data
-                                tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
-                                
-                                if latest_timestamp is None or tail_timestamp > latest_timestamp:
-                                    latest_timestamp = tail_timestamp
-                                    
-                                for col_idx in range(self.num_columns):
-                                    if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
-                                        tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
-                                        
-                                current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
-                                update_count += 1
-                                
-                            except Exception as e:
-                                print(f"Error processing tail record: {e}")
-                                break
-                        
-                        # updates for application
-                        if update_count > 0:
+                    tail_values = [None] * self.num_columns
+                    latest_timestamp = None
+                    current_rid = indirection
+                    update_count = 0
+                    
+                    # Fast path for single update (common case)
+                    if current_rid & 1:
+                        try:
+                            tail_idx, tail_pos = page_directory[current_rid]
+                            
+                            # Faster bulk read of tail page
+                            tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
+                            latest_timestamp = tail_timestamp
+                            
+                            # Only read columns that have been updated
                             for col_idx in range(self.num_columns):
-                                if tail_values[col_idx] is not None:
-                                    base_updates.append((base_idx, base_pos, col_idx, tail_values[col_idx]))
+                                if (schema_encoding >> col_idx) & 1:
+                                    tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
                             
-                            # metadata updates
-                            base_updates.append((base_idx, base_pos, SCHEMA_ENCODING_COLUMN, 0))
-                            base_updates.append((base_idx, base_pos, INDIRECTION_COLUMN, bid))
+                            next_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
                             
-                            if latest_timestamp is not None:
-                                base_updates.append((base_idx, base_pos, TIMESTAMP_COLUMN, latest_timestamp))
-                            
-                            processed_bids.add(bid)
-                            merge_count += 1
-                except Exception as e:
-                    print(f"Error processing base record: {e}")
+                            # Check if we need to follow the chain
+                            if next_rid & 1 and next_rid != current_rid:
+                                # Fall back to full chain traversal
+                                while current_rid & 1:
+                                    tail_idx, tail_pos = page_directory.get(current_rid, (None, None))
+                                    if tail_idx is None:
+                                        break
+                                        
+                                    tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
+                                    if latest_timestamp is None or tail_timestamp > latest_timestamp:
+                                        latest_timestamp = tail_timestamp
+                                        
+                                    for col_idx in range(self.num_columns):
+                                        if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
+                                            tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
+                                            
+                                    current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+                                    update_count += 1
+                            else:
+                                update_count = 1
+                                
+                            # Prepare updates
+                            if update_count > 0:
+                                for col_idx in range(self.num_columns):
+                                    if tail_values[col_idx] is not None:
+                                        base_updates.append((base_idx, base_pos, col_idx, tail_values[col_idx]))
+                                
+                                # Metadata updates
+                                base_updates.append((base_idx, base_pos, SCHEMA_ENCODING_COLUMN, 0))
+                                base_updates.append((base_idx, base_pos, INDIRECTION_COLUMN, bid))
+                                
+                                if latest_timestamp is not None:
+                                    base_updates.append((base_idx, base_pos, TIMESTAMP_COLUMN, latest_timestamp))
+                                
+                                processed_bids.add(bid)
+                                merge_count += 1
+                        except Exception as e:
+                            print(f"Error processing tail record: {e}")
         
-        # Return the prepared updates to be applied by the main thread
+        # Batch update the base pages
         return base_updates, merge_count
+
+    # Add this helper method to Table class
+    def _prefetch_pages_for_merge(self):
+        """Prefetch pages that will be needed for merge operation"""
+        from .db import db_instance
+        
+        # Estimate records needing updates
+        for base_idx in range(len(self.base_pages)):
+            base_page = self.base_pages[base_idx]
+            if base_page is None:
+                continue
+                
+            # Prefetch key metadata columns
+            for col_idx in [INDIRECTION_COLUMN, RID_COLUMN, SCHEMA_ENCODING_COLUMN]:
+                db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
     
     def _merge_completed(self, future):
         try:
@@ -347,7 +469,7 @@ class Table:
         avg_chain_length = self.updates / base_records if base_records> 0 else 0
         
         ### Threshold for deciding to merge ###
-        AVG_CHAIN_LENGTH_THRESHOLD = 2.0  # Average chain length
+        AVG_CHAIN_LENGTH_THRESHOLD = 3.0  # Average chain length
         
         # decide based on update chains
         return avg_chain_length > AVG_CHAIN_LENGTH_THRESHOLD
