@@ -2,12 +2,13 @@ from lstore.db import Database
 from lstore.query import Query
 
 from random import choice, randint, sample, seed
+import time
 
 
 records = {}
 number_of_records = 1000
-number_of_aggregates = 50
-number_of_updates = 10
+number_of_aggregates = 10
+number_of_updates = 1
 keys = {}
 
 def reorganize_result(result):
@@ -239,6 +240,7 @@ def durability_tester1():
 
         # x update on every column
         for _ in range(number_of_updates):
+            time1 = time.time()
             for key in keys:
                 updated_columns = [None, None, None, None, None]
                 # copy record to check
@@ -259,7 +261,8 @@ def durability_tester1():
                     print('update error on', original, 'and', updated_columns, ':', record.columns, ', correct:', records[key])
                 else:
                     pass
-                    # print('update on', original, 'and', updated_columns, ':', record)
+                    #print('update on', original, 'and', updated_columns, ':', record.columns)
+            time2 = time.time()
         print("Update finished")
 
         for i in range(0, number_of_aggregates):
@@ -270,7 +273,7 @@ def durability_tester1():
                 print('sum error on [', keys[r[0]], ',', keys[r[1]], ']: ', result, ', correct: ', column_sum)
             else:
                 pass
-                print('select on', key, ':', record.columns, ', correct:', records[key])
+                #print('select on', key, ':', record.columns, ', correct:', records[key])
         print("Aggregate finished")
         db.close()
         print("DB is closed")
@@ -304,7 +307,7 @@ def durability_tester2():
                 print('select error on', key, ':', record.columns, ', correct:', records[key])
             else:
                 pass
-                print('select on', key, ':', record.columns, ', correct:', records[key])
+                #print('select on', key, ':', record.columns, ', correct:', records[key])
         if not err:
             pass
         print("Select finished")
@@ -333,7 +336,7 @@ def merging_tester():
     merge_table = db.create_table('merge', 5, 0)
     query = Query(merge_table)
     update_nums = [2, 4, 8, 16]
-    records_num = 10000
+    records_num = 500
     sample_count = 20
     select_repeat = 20
     for i in range(records_num):

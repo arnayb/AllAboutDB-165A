@@ -12,6 +12,9 @@ from .config import (
 import concurrent.futures
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)#max 10 threads
 
+from timeit import default_timer as timer
+from decimal import Decimal
+
 class ReadWriteLockNoWait:
     def __init__(self):
         self.readers = 0  # Number of active readers
@@ -291,15 +294,23 @@ class Table:
                 if key not in self.lock_map:
                     self.lock_map[key] = ReadWriteLockNoWait()
 
-
     def merge(self):
         if hasattr(self, 'merge_in_progress') and self.merge_in_progress:
             return False
-    
+        
         self.merge_in_progress = True
-        merge_future = thread_pool.submit(self._merge_worker)
-        merge_future.add_done_callback(self._merge_completed)
-
+        start = timer()
+        
+        def wrapped_merge():
+            return self._merge_worker()  # Make sure to return the result
+        
+        def timing_callback(future):
+            end = timer()
+            print("Merge time: ", Decimal(end - start).quantize(Decimal('0.01')), "seconds")
+            self._merge_completed(future)  # Pass the original future through
+        
+        merge_future = thread_pool.submit(wrapped_merge)
+        merge_future.add_done_callback(timing_callback)
         return True
     
     def _merge_worker(self):
@@ -420,7 +431,7 @@ class Table:
         avg_chain_length = self.updates / base_records if base_records> 0 else 0
         
         ### Threshold for deciding to merge ###
-        AVG_CHAIN_LENGTH_THRESHOLD = 2.0  # Average chain length
+        AVG_CHAIN_LENGTH_THRESHOLD = 3.0  # Average chain length
         
         # decide based on update chains
         return avg_chain_length > AVG_CHAIN_LENGTH_THRESHOLD

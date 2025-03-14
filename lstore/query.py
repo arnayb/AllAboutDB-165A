@@ -47,6 +47,9 @@ class Query:
         bid = self.table.bid_counter
         self.table.bid_counter += 2
 
+        if self.table.should_merge():
+            self.table.merge()
+
         key_col = self.table.key
         if self.table.index.locate(key_col, columns[key_col]):
             return False
@@ -150,81 +153,147 @@ class Query:
     # Returns False if no records exist with given key or if the target record cannot be accessed due to 2PL locking
     """
     def update(self, primary_key, *columns):
-        # make sure columns len == len num_columns
         if len(columns) != self.table.num_columns:
             return False
         
+        # Quick check if anything needs updating
+        if all(col is None for col in columns):
+            return True
+        
+        # Check if record exists
         record_index = self.table.index.locate(self.table.key, primary_key)
         if len(record_index) == 0:  
+            # Handle insert case for non-existent record if all columns are provided
             if None not in columns:
                 return self.insert(*columns)
             return False 
 
         bid = record_index[0]
-
-        # Check if trying to update to an existing primary key
-        if columns[self.table.key] != None and columns[self.table.key] != primary_key:
-            # If the new primary key already exists in another record, reject the update
-            existing_records = self.table.index.locate(self.table.key, columns[self.table.key])
+        base_idx, base_pos = self.table.page_directory[bid]
+        
+        # Prepare primary key update if needed (do this outside the lock)
+        new_primary_key = columns[self.table.key]
+        primary_key_changed = (new_primary_key is not None and new_primary_key != primary_key)
+        
+        if primary_key_changed:
+            # Check if new primary key already exists
+            existing_records = self.table.index.locate(self.table.key, new_primary_key)
             if existing_records:
                 return False
-            del self.table.index.indices[self.table.key][primary_key]
-            self.table.index.indices[self.table.key][columns[self.table.key]] = [bid]
 
-        base_idx, base_pos = self.table.page_directory[bid]
-        schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
+        # Create lock if needed
+        if primary_key not in self.table.lock_map:
+            self.table.lock_map[primary_key] = ReadWriteLockNoWait()
         
+        # Try to acquire write lock with minimal blocking time
         if not self.table.lock_map[primary_key].try_acquire_write():
             return False
+        
+        try:
+            schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
+            indirection = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             
-        # Create a new schema encoding for this update
-        new_schema = 0
-        
-        if schema_encoding:
-            tid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
-            tail_idx, tail_pos = self.table.page_directory[tid]
+            columns_to_update = []
+            updated_values = []
+            for i, value in enumerate(columns):
+                if value is not None:
+                    columns_to_update.append(i)
+                    updated_values.append(value)
             
-            for i, value in enumerate(columns):
-                if value is None:
-                    # If not updating this column, get latest value from tail record
-                    value = self.table.read_tail_page(i, tail_idx, tail_pos)
-                else:
-                    # Mark this column as updated in schema encoding
-                    new_schema |= (1 << i)
-                    
-                # Write the value (either from previous tail record or new update)
-                self.table.write_tail_page(i, value)
+            # If no columns need updating after all, return early
+            if not columns_to_update:
+                return True
                 
-        else:
-            for i, value in enumerate(columns):
-                if value is None:
-                    # If not updating this column, get value from base record
-                    value = self.table.read_base_page(i, base_idx, base_pos)
-                else:
-                    # Mark this column as updated in schema encoding
-                    new_schema |= (1 << i)
-                    
-                # Write the value (either from base record or new update)
-                self.table.write_tail_page(i, value)
+            current_values = {}
+            if indirection & 1:  # Record has updates (odd RID = tail record)
+                # Get the most recent tail record
+                tail_idx, tail_pos = self.table.page_directory[indirection]
                 
-            # Update schema encoding in base record to indicate updates exist
-            self.table.write_base_page(SCHEMA_ENCODING_COLUMN, new_schema, base_idx, base_pos)
-
-        tid = self.table.tid_counter
-        self.table.write_tail_page(INDIRECTION_COLUMN, self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos))
-        self.table.write_base_page(INDIRECTION_COLUMN, tid, base_idx, base_pos)
-        self.table.write_tail_page(RID_COLUMN, tid)
-        self.table.write_tail_page(TIMESTAMP_COLUMN, 0)
-        
-        # Write the correct schema encoding
-        self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, new_schema)
-        
-        self.table.page_directory[tid] = [self.table.num_tail_pages - 1, self.table.tail_pages[-1].num_records]
-        self.table.tid_counter += 2
-        self.table.tail_pages[-1].num_records += 1
-        self.table.updates += 1
-        self.table.lock_map[primary_key].release_write()
-        return True
+                # Batch read current values for columns that need updating
+                for i in columns_to_update:
+                    current_values[i] = self.table.read_tail_page(i, tail_idx, tail_pos)
+            else:
+                # No updates yet, read from base page
+                for i in columns_to_update:
+                    current_values[i] = self.table.read_base_page(i, base_idx, base_pos)
+            
+            actual_updates_needed = False
+            for i, value in zip(columns_to_update, updated_values):
+                if i in current_values and value != current_values[i]:
+                    actual_updates_needed = True
+                    break
+                    
+            # If no actual changes needed, return early without creating tail record
+            if not actual_updates_needed:
+                return True
+                
+            # Calculate new schema encoding
+            new_schema = schema_encoding
+            for i in columns_to_update:
+                new_schema |= (1 << i)
+            
+            # to avoid multiple resizing operations
+            tail_idx = self.table.num_tail_pages - 1
+            if self.table.num_tail_pages == 0 or not self.table.tail_pages[tail_idx].has_capacity():
+                self.table.new_tail_page()
+                tail_idx = self.table.num_tail_pages - 1
+            
+            tail_pos = self.table.tail_pages[tail_idx].num_records
+            
+            # OPTIMIZATION 6: Bulk write to tail page - prepare all values first
+            tid = self.table.tid_counter
+            current_time = int(time())
+            
+            # Write column values to tail record
+            for i, value in zip(columns_to_update, updated_values):
+                self.table.write_tail_page(i, value, tail_idx, tail_pos)
+                
+            # For columns not being updated, copy values from most recent version
+            for i in range(self.table.num_columns):
+                if i not in columns_to_update:
+                    if i in current_values:
+                        self.table.write_tail_page(i, current_values[i], tail_idx, tail_pos)
+                    else:
+                        # Need to read this value
+                        if indirection & 1:
+                            prev_tail_idx, prev_tail_pos = self.table.page_directory[indirection]
+                            value = self.table.read_tail_page(i, prev_tail_idx, prev_tail_pos)
+                        else:
+                            value = self.table.read_base_page(i, base_idx, base_pos)
+                        self.table.write_tail_page(i, value, tail_idx, tail_pos)
+            
+            # Write metadata columns
+            self.table.write_tail_page(INDIRECTION_COLUMN, indirection, tail_idx, tail_pos)
+            self.table.write_tail_page(RID_COLUMN, tid, tail_idx, tail_pos)
+            self.table.write_tail_page(TIMESTAMP_COLUMN, current_time, tail_idx, tail_pos)
+            self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, new_schema, tail_idx, tail_pos)
+            
+            # Update base record to point to new tail record
+            self.table.write_base_page(INDIRECTION_COLUMN, tid, base_idx, base_pos)
+            
+            # Update schema encoding in base record if it changed
+            if new_schema != schema_encoding:
+                self.table.write_base_page(SCHEMA_ENCODING_COLUMN, new_schema, base_idx, base_pos)
+            
+            # Update page directory and counters
+            self.table.page_directory[tid] = [tail_idx, tail_pos]
+            self.table.tid_counter += 2
+            self.table.tail_pages[tail_idx].num_records += 1
+            self.table.updates += 1
+            
+            # Update index if primary key changed
+            if primary_key_changed:
+                del self.table.index.indices[self.table.key][primary_key]
+                self.table.index.indices[self.table.key][new_primary_key] = [bid]
+                
+                # Update lock map with new key
+                if new_primary_key not in self.table.lock_map:
+                    self.table.lock_map[new_primary_key] = ReadWriteLockNoWait()
+            
+            return True
+        finally:
+            # Always release the lock
+            self.table.lock_map[primary_key].release_write()
     
     """
     :param start_range: int         # Start of the key range to aggregate 

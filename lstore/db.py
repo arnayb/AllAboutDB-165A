@@ -32,6 +32,8 @@ class Database():
 
     def add_page_to_bufferpool(self, table_name, page_type, page_index, col_index, page):
         """Add a page to the buffer pool, evicting LRU page if necessary"""
+        if page is None or col_index < 0:
+            return None
         key = (table_name, page_type, page_index, col_index)
         with self.bufferpool_lock:
             # If buffer pool is full, evict least recently used page
