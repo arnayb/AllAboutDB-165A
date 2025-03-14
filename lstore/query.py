@@ -161,17 +161,17 @@ class Query:
             return True
         
         # Check if record exists
-        record_index = self.table.index.locate(self.table.key, primary_key)
-        if len(record_index) == 0:  
+        record_indices = self.table.index.locate(self.table.key, primary_key)
+        if len(record_indices) == 0:  
             # Handle insert case for non-existent record if all columns are provided
             if None not in columns:
                 return self.insert(*columns)
             return False 
 
-        bid = record_index[0]
+        bid = record_indices[0]
         base_idx, base_pos = self.table.page_directory[bid]
         
-        # Prepare primary key update if needed (do this outside the lock)
+        # Prepare primary key update if needed
         new_primary_key = columns[self.table.key]
         primary_key_changed = (new_primary_key is not None and new_primary_key != primary_key)
         
@@ -190,40 +190,46 @@ class Query:
             return False
         
         try:
+            # Batch read metadata
             schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
             indirection = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             
+            # Optimize column updates tracking
             columns_to_update = []
             updated_values = []
+            
+            # Only read values for columns that are being updated
             for i, value in enumerate(columns):
                 if value is not None:
                     columns_to_update.append(i)
                     updated_values.append(value)
             
-            # If no columns need updating after all, return early
+            # If no columns need updating, return early
             if not columns_to_update:
                 return True
-                
+            
+            # Batch read current values
             current_values = {}
-            if indirection & 1:  # Record has updates (odd RID = tail record)
+            if indirection & 1:  # Record has updates
                 # Get the most recent tail record
                 tail_idx, tail_pos = self.table.page_directory[indirection]
                 
-                # Batch read current values for columns that need updating
+                # Read all needed columns in one batch
                 for i in columns_to_update:
                     current_values[i] = self.table.read_tail_page(i, tail_idx, tail_pos)
             else:
-                # No updates yet, read from base page
+                # Read from base page
                 for i in columns_to_update:
                     current_values[i] = self.table.read_base_page(i, base_idx, base_pos)
             
+            # Check if any values actually changed
             actual_updates_needed = False
             for i, value in zip(columns_to_update, updated_values):
                 if i in current_values and value != current_values[i]:
                     actual_updates_needed = True
                     break
                     
-            # If no actual changes needed, return early without creating tail record
+            # If no actual changes, return early
             if not actual_updates_needed:
                 return True
                 
@@ -232,50 +238,44 @@ class Query:
             for i in columns_to_update:
                 new_schema |= (1 << i)
             
-            # to avoid multiple resizing operations
+            # Pre-allocate tail page if needed
             tail_idx = self.table.num_tail_pages - 1
-            if self.table.num_tail_pages == 0 or not self.table.tail_pages[tail_idx].has_capacity():
+            need_new_tail_page = (self.table.num_tail_pages == 0 or 
+                                not self.table.tail_pages[tail_idx].has_capacity())
+            
+            if need_new_tail_page:
                 self.table.new_tail_page()
                 tail_idx = self.table.num_tail_pages - 1
             
             tail_pos = self.table.tail_pages[tail_idx].num_records
             
-            # OPTIMIZATION 6: Bulk write to tail page - prepare all values first
+            # Prepare all values to be written at once
             tid = self.table.tid_counter
             current_time = int(time())
             
-            # Write column values to tail record
-            for i, value in zip(columns_to_update, updated_values):
-                self.table.write_tail_page(i, value, tail_idx, tail_pos)
-                
-            # For columns not being updated, copy values from most recent version
-            for i in range(self.table.num_columns):
-                if i not in columns_to_update:
-                    if i in current_values:
-                        self.table.write_tail_page(i, current_values[i], tail_idx, tail_pos)
-                    else:
-                        # Need to read this value
-                        if indirection & 1:
-                            prev_tail_idx, prev_tail_pos = self.table.page_directory[indirection]
-                            value = self.table.read_tail_page(i, prev_tail_idx, prev_tail_pos)
-                        else:
-                            value = self.table.read_base_page(i, base_idx, base_pos)
-                        self.table.write_tail_page(i, value, tail_idx, tail_pos)
+            # Use a single batch write for all tail page updates
+            self._batch_write_tail_record(
+                tid, 
+                indirection, 
+                current_time, 
+                new_schema, 
+                columns_to_update, 
+                updated_values, 
+                current_values, 
+                tail_idx, 
+                tail_pos, 
+                base_idx,
+                base_pos
+            )
             
-            # Write metadata columns
-            self.table.write_tail_page(INDIRECTION_COLUMN, indirection, tail_idx, tail_pos)
-            self.table.write_tail_page(RID_COLUMN, tid, tail_idx, tail_pos)
-            self.table.write_tail_page(TIMESTAMP_COLUMN, current_time, tail_idx, tail_pos)
-            self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, new_schema, tail_idx, tail_pos)
-            
-            # Update base record to point to new tail record
+            # Update base record - only the necessary fields
             self.table.write_base_page(INDIRECTION_COLUMN, tid, base_idx, base_pos)
             
-            # Update schema encoding in base record if it changed
+            # Only update schema if it changed
             if new_schema != schema_encoding:
                 self.table.write_base_page(SCHEMA_ENCODING_COLUMN, new_schema, base_idx, base_pos)
             
-            # Update page directory and counters
+            # Update page directory
             self.table.page_directory[tid] = [tail_idx, tail_pos]
             self.table.tid_counter += 2
             self.table.tail_pages[tail_idx].num_records += 1
@@ -286,7 +286,7 @@ class Query:
                 del self.table.index.indices[self.table.key][primary_key]
                 self.table.index.indices[self.table.key][new_primary_key] = [bid]
                 
-                # Update lock map with new key
+                # Update lock map
                 if new_primary_key not in self.table.lock_map:
                     self.table.lock_map[new_primary_key] = ReadWriteLockNoWait()
             
@@ -294,7 +294,38 @@ class Query:
         finally:
             # Always release the lock
             self.table.lock_map[primary_key].release_write()
-    
+
+    # Add this helper method to the Query class
+    def _batch_write_tail_record(self, tid, indirection, timestamp, schema, 
+                            columns_to_update, updated_values, current_values, 
+                            tail_idx, tail_pos, base_idx, base_pos):
+        # Write metadata columns
+        self.table.write_tail_page(INDIRECTION_COLUMN, indirection, tail_idx, tail_pos)
+        self.table.write_tail_page(RID_COLUMN, tid, tail_idx, tail_pos)
+        self.table.write_tail_page(TIMESTAMP_COLUMN, timestamp, tail_idx, tail_pos)
+        self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, schema, tail_idx, tail_pos)
+        
+        # Write updated column values
+        for i, value in zip(columns_to_update, updated_values):
+            self.table.write_tail_page(i, value, tail_idx, tail_pos)
+        
+        # Write unchanged column values 
+        for i in range(self.table.num_columns):
+            if i not in columns_to_update:
+                if i in current_values:
+                    self.table.write_tail_page(i, current_values[i], tail_idx, tail_pos)
+                else:
+                    # Need to fetch this value
+                    if indirection & 1:
+                        prev_tail_idx, prev_tail_pos = self.table.page_directory[indirection]
+                        value = self.table.read_tail_page(i, prev_tail_idx, prev_tail_pos)
+                    else:
+                        # Use the base record info we already have
+                        # This assumes base_idx and base_pos are passed in or available in the class
+                        # If not, you should pass them to this method
+                        value = self.table.read_base_page(i, base_idx, base_pos)
+                    self.table.write_tail_page(i, value, tail_idx, tail_pos)
+        
     """
     :param start_range: int         # Start of the key range to aggregate 
     :param end_range: int           # End of the key range to aggregate 

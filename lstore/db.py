@@ -20,12 +20,16 @@ class Database():
         db_instance = self
 
     def get_page_from_bufferpool(self, table_name, page_type, page_index, col_index):
-        """Retrieve a page from the buffer pool if it exists"""
+        """Retrieve a page from the buffer pool if it exists with faster lookup"""
         key = (table_name, page_type, page_index, col_index)
         with self.bufferpool_lock:
             if key in self.bufferpool:
-                # Update LRU - move to end of list (most recently used)
-                self.bufferpool_lru.remove(key)
+                # Move to end of LRU list without removing first (more efficient)
+                try:
+                    self.bufferpool_lru.remove(key)
+                except ValueError:
+                    # Handle case where key might not be in LRU
+                    pass
                 self.bufferpool_lru.append(key)
                 return self.bufferpool[key]
             return None
@@ -34,10 +38,28 @@ class Database():
         """Add a page to the buffer pool, evicting LRU page if necessary"""
         if page is None or col_index < 0:
             return None
+    
         key = (table_name, page_type, page_index, col_index)
         with self.bufferpool_lock:
+            # Check if page is already in buffer pool
+            if key in self.bufferpool:
+                # Just update the LRU position
+                try:
+                    self.bufferpool_lru.remove(key)
+                except ValueError:
+                    pass
+                self.bufferpool_lru.append(key)
+                return self.bufferpool[key]
             # If buffer pool is full, evict least recently used page
-            if len(self.bufferpool) >= self.bufferpool_capacity and self.bufferpool_lru:
+            if len(self.bufferpool) >= self.bufferpool_capacity:
+                # Evict 10% of pages at once for better performance
+                evict_count = min(int(self.bufferpool_capacity * 0.1), 50)
+                evict_count = max(evict_count, 1)  # Ensure at least one page is evicted
+                
+                # Batch evict pages
+                for _ in range(evict_count):
+                    if not self.bufferpool_lru:
+                        break
                 lru_key = self.bufferpool_lru.pop(0)
                 evicted_page = self.bufferpool.pop(lru_key)
                 if evicted_page.is_dirty:

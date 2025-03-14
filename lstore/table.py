@@ -318,81 +318,119 @@ class Table:
         processed_bids = set()
         merge_count = 0
 
-        copy_base_pages = copy.deepcopy(self.base_pages)
-        copy_page_directory = copy.deepcopy(self.page_directory)
+        # Prefetch all needed pages to buffer pool
+        self._prefetch_pages_for_merge()
+        
+        # Use local variables to avoid attribute lookups
+        base_pages = self.base_pages
+        page_directory = self.page_directory
         
         base_updates = []  # [(base_idx, base_pos, col_idx, value), ...]
         
-        # for each base page in our snapshot
-        for base_idx in range(len(copy_base_pages)):
-            base_page = copy_base_pages[base_idx]
+        # Process base pages in batches
+        batch_size = 100
+        for base_idx in range(len(base_pages)):
+            base_page = base_pages[base_idx]
             if base_page is None:
                 continue
                 
-            # for each record in the base page
-            for base_pos in range(base_page.num_records):
-                try:
-                    # read values from the copy to avoid locking
-                    bid = base_page.columns[RID_COLUMN].read(base_pos)
-                    indirection = base_page.columns[INDIRECTION_COLUMN].read(base_pos)
-                    schema_encoding = base_page.columns[SCHEMA_ENCODING_COLUMN].read(base_pos)
-                    
-                    if bid in processed_bids or indirection == bid:
+            # Process records in batches
+            for batch_start in range(0, base_page.num_records, batch_size):
+                batch_end = min(batch_start + batch_size, base_page.num_records)
+                update_batch = []
+                
+                # First pass: collect all indirection pointers
+                tail_pointers = []
+                for base_pos in range(batch_start, batch_end):
+                    bid = self.read_base_page(RID_COLUMN, base_idx, base_pos)
+                    if bid in processed_bids:
                         continue
+                        
+                    indirection = self.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
+                    if indirection & 1 and indirection != bid:  # Odd RID = tail record
+                        tail_pointers.append((base_pos, bid, indirection))
+                
+                # Second pass: process tail records in batches
+                for base_pos, bid, indirection in tail_pointers:
+                    schema_encoding = self.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
                     
-                    if indirection & 1:  # check if indirection points to a tail record
-                        update_count = 0
-                        current_rid = indirection
-                        tail_values = [None] * self.num_columns
-                        latest_timestamp = None
-                        
-                        while current_rid & 1:
-                            try:
-                                if current_rid not in copy_page_directory:
-                                    break
-                                    
-                                tail_idx, tail_pos = copy_page_directory[current_rid]
-                                
-                                if tail_idx >= len(self.tail_pages):
-                                    break
-                                    
-                                # use the thread-safe read method for the real data
-                                tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
-                                
-                                if latest_timestamp is None or tail_timestamp > latest_timestamp:
-                                    latest_timestamp = tail_timestamp
-                                    
-                                for col_idx in range(self.num_columns):
-                                    if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
-                                        tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
-                                        
-                                current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
-                                update_count += 1
-                                
-                            except Exception as e:
-                                print(f"Error processing tail record: {e}")
-                                break
-                        
-                        # updates for application
-                        if update_count > 0:
+                    tail_values = [None] * self.num_columns
+                    latest_timestamp = None
+                    current_rid = indirection
+                    update_count = 0
+                    
+                    # Fast path for single update (common case)
+                    if current_rid & 1:
+                        try:
+                            tail_idx, tail_pos = page_directory[current_rid]
+                            
+                            # Faster bulk read of tail page
+                            tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
+                            latest_timestamp = tail_timestamp
+                            
+                            # Only read columns that have been updated
                             for col_idx in range(self.num_columns):
-                                if tail_values[col_idx] is not None:
-                                    base_updates.append((base_idx, base_pos, col_idx, tail_values[col_idx]))
+                                if (schema_encoding >> col_idx) & 1:
+                                    tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
                             
-                            # metadata updates
-                            base_updates.append((base_idx, base_pos, SCHEMA_ENCODING_COLUMN, 0))
-                            base_updates.append((base_idx, base_pos, INDIRECTION_COLUMN, bid))
+                            next_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
                             
-                            if latest_timestamp is not None:
-                                base_updates.append((base_idx, base_pos, TIMESTAMP_COLUMN, latest_timestamp))
-                            
-                            processed_bids.add(bid)
-                            merge_count += 1
-                except Exception as e:
-                    print(f"Error processing base record: {e}")
+                            # Check if we need to follow the chain
+                            if next_rid & 1 and next_rid != current_rid:
+                                # Fall back to full chain traversal
+                                while current_rid & 1:
+                                    tail_idx, tail_pos = page_directory.get(current_rid, (None, None))
+                                    if tail_idx is None:
+                                        break
+                                        
+                                    tail_timestamp = self.read_tail_page(TIMESTAMP_COLUMN, tail_idx, tail_pos)
+                                    if latest_timestamp is None or tail_timestamp > latest_timestamp:
+                                        latest_timestamp = tail_timestamp
+                                        
+                                    for col_idx in range(self.num_columns):
+                                        if tail_values[col_idx] is None and (schema_encoding >> col_idx) & 1:
+                                            tail_values[col_idx] = self.read_tail_page(col_idx, tail_idx, tail_pos)
+                                            
+                                    current_rid = self.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+                                    update_count += 1
+                            else:
+                                update_count = 1
+                                
+                            # Prepare updates
+                            if update_count > 0:
+                                for col_idx in range(self.num_columns):
+                                    if tail_values[col_idx] is not None:
+                                        base_updates.append((base_idx, base_pos, col_idx, tail_values[col_idx]))
+                                
+                                # Metadata updates
+                                base_updates.append((base_idx, base_pos, SCHEMA_ENCODING_COLUMN, 0))
+                                base_updates.append((base_idx, base_pos, INDIRECTION_COLUMN, bid))
+                                
+                                if latest_timestamp is not None:
+                                    base_updates.append((base_idx, base_pos, TIMESTAMP_COLUMN, latest_timestamp))
+                                
+                                processed_bids.add(bid)
+                                merge_count += 1
+                        except Exception as e:
+                            print(f"Error processing tail record: {e}")
         
-        # Return the prepared updates to be applied by the main thread
+        # Batch update the base pages
         return base_updates, merge_count
+
+    # Add this helper method to Table class
+    def _prefetch_pages_for_merge(self):
+        """Prefetch pages that will be needed for merge operation"""
+        from .db import db_instance
+        
+        # Estimate records needing updates
+        for base_idx in range(len(self.base_pages)):
+            base_page = self.base_pages[base_idx]
+            if base_page is None:
+                continue
+                
+            # Prefetch key metadata columns
+            for col_idx in [INDIRECTION_COLUMN, RID_COLUMN, SCHEMA_ENCODING_COLUMN]:
+                db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
     
     def _merge_completed(self, future):
         try:

@@ -7,7 +7,7 @@ import time
 
 records = {}
 number_of_records = 1000
-number_of_aggregates = 10
+number_of_aggregates = 100
 number_of_updates = 1
 keys = {}
 
@@ -336,9 +336,9 @@ def merging_tester():
     merge_table = db.create_table('merge', 5, 0)
     query = Query(merge_table)
     update_nums = [2, 4, 8, 16]
-    records_num = 500
-    sample_count = 20
-    select_repeat = 20
+    records_num = 10000
+    sample_count = 200
+    select_repeat = 200
     for i in range(records_num):
         query.insert(*[i, (i+100)%records_num, (i+200)%records_num, (i+300)%records_num, (i+400)%records_num])
     for index in range(len(update_nums)):
