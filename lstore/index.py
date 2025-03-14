@@ -23,7 +23,7 @@ class Index:
         if not (0 <= column < self.table.num_columns):
             raise ValueError(f"Invalid column number: {column}")
         
-        if self.indices[column].has_key(value):
+        if self.indices[column] != None and self.indices[column].has_key(value):
             return self.indices[column][value]
 
         return []
