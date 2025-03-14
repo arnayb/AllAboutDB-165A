@@ -34,6 +34,9 @@ class Index:
     def locate_range(self, begin, end, column):
         if not (0 <= column < self.table.num_columns):
             raise ValueError(f"Invalid column number: {column}")
+        
+        if self.indices[column] == None:
+            return []
 
         return list(self.indices[column].values(begin, end))
     
