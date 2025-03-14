@@ -156,45 +156,109 @@ class Table:
         self.page_ranges[-1].add_page(page)  # Add page to latest range
 
     def read_base_page(self, col_idx, base_idx, base_pos):
+        # Get the Database instance
+        from .db import db_instance
+        
+        # Try to get the page from buffer pool
+        page = db_instance.get_page_from_bufferpool(self.name, "base", base_idx, col_idx)
+        db_instance.add_page_to_bufferpool(self.name, "base", base_idx, col_idx, page)
+        
+        if page is None:
+            # Page not in buffer pool, load it
+            with self.base_pages[base_idx].PinLock:
+                # Double-check if page is loaded
+                if isinstance(self.base_pages[base_idx].columns[col_idx], Page):
+                    page = self.base_pages[base_idx].columns[col_idx]
+                else:
+                    # Load page from disk
+                    page = db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
+                    self.base_pages[base_idx].columns[col_idx] = page
+        
+        # Read the value
         with self.base_pages[base_idx].PinLock:
-            return self.base_pages[base_idx].columns[col_idx].read(base_pos)
+            return page.read(base_pos)
 
     def read_tail_page(self, col_idx, tail_idx, tail_pos):
+        # Get the Database instance
+        from .db import db_instance
+        
+        # Try to get the page from buffer pool
+        page = db_instance.get_page_from_bufferpool(self.name, "tail", tail_idx, col_idx)
+        db_instance.add_page_to_bufferpool(self.name, "tail", tail_idx, col_idx, page)
+        
+        if page is None:
+            # Page not in buffer pool, load it
+            with self.tail_pages[tail_idx].PinLock:
+                # Double-check if page is loaded
+                if isinstance(self.tail_pages[tail_idx].columns[col_idx], Page):
+                    page = self.tail_pages[tail_idx].columns[col_idx]
+                else:
+                    # Load page from disk
+                    page = db_instance._load_page_if_needed(self.name, "tail", tail_idx, col_idx)
+                    self.tail_pages[tail_idx].columns[col_idx] = page
+    
+        # Read the value
         with self.tail_pages[tail_idx].PinLock:
-            return self.tail_pages[tail_idx].columns[col_idx].read(tail_pos)
+            return page.read(tail_pos)
 
     def write_base_page(self, col_idx, value, base_idx=-1, base_pos=-1):
+        from .db import db_instance
+        
+        if base_idx == -1:
+            base_idx = self.num_base_pages - 1
+        
         if base_pos == -1 and not self.base_pages[base_idx].has_capacity():
             self.num_base_pages += 1
             self.base_pages.append(LogicalPage(self))
-
-        self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
+            base_idx = self.num_base_pages - 1
+        
+        # Get or create the page
+        page = db_instance.get_page_from_bufferpool(self.name, "base", base_idx, col_idx)
+        if page is None:
+            with self.base_pages[base_idx].PinLock:
+                if isinstance(self.base_pages[base_idx].columns[col_idx], Page):
+                    page = self.base_pages[base_idx].columns[col_idx]
+                else:
+                    page = db_instance._load_page_if_needed(self.name, "base", base_idx, col_idx)
+                    if page is None:
+                        page = Page()
+                    self.base_pages[base_idx].columns[col_idx] = page
+        
+        # Write to the page
+        with self.base_pages[base_idx].PinLock:
+            page.write(value, base_pos)
+            page.is_dirty = True  # Mark the page as dirty
+            # Add or update in buffer pool
+            db_instance.add_page_to_bufferpool(self.name, "base", base_idx, col_idx, page)
 
     def write_tail_page(self, col_idx, value, tail_idx=-1, tail_pos=-1):
-        if self.num_tail_pages == 0 or \
-                (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
+        from .db import db_instance
+        
+        if tail_idx == -1:
+            tail_idx = self.num_tail_pages - 1
+        
+        if self.num_tail_pages == 0 or (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
             self.num_tail_pages += 1
             self.tail_pages.append(LogicalPage(self))
-
-        self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
-
-    '''def __merge(self):
-        print("merge is happening")
-        pass
-      
-            self.new_base_page()
-        with self.base_pages[base_idx].PinLock:
-            self.base_pages[base_idx].columns[col_idx].write(value, base_pos)
-            self.dirty_base_pages.add((base_idx, col_idx))'''
-
-    
-    def write_tail_page(self, col_idx, value, tail_idx = -1, tail_pos = -1):
-        if self.num_tail_pages == 0 or \
-          (tail_pos == -1 and not self.tail_pages[tail_idx].has_capacity()):
-            self.new_tail_page()
+            tail_idx = self.num_tail_pages - 1
+        
+        # Get or create the page
+        page = db_instance.get_page_from_bufferpool(self.name, "tail", tail_idx, col_idx)
+        if page is None:
+            with self.tail_pages[tail_idx].PinLock:
+                if isinstance(self.tail_pages[tail_idx].columns[col_idx], Page):
+                    page = self.tail_pages[tail_idx].columns[col_idx]
+                else:
+                    page = db_instance._load_page_if_needed(self.name, "tail", tail_idx, col_idx)
+                    if page is None:
+                        page = Page()
+                    self.tail_pages[tail_idx].columns[col_idx] = page
+        
+        # Write to the page
         with self.tail_pages[tail_idx].PinLock:
-            self.tail_pages[tail_idx].columns[col_idx].write(value, tail_pos)
-            self.dirty_tail_pages.add((tail_idx, col_idx))
+            page.write(value, tail_pos)
+            # Add or update in buffer pool
+            db_instance.add_page_to_bufferpool(self.name, "tail", tail_idx, col_idx, page)
 
     def get_table_stats(self):#for getting table metadata to save
         state = {
@@ -209,7 +273,6 @@ class Table:
             'num_tail_pages': self.num_tail_pages,
             'updates': self.updates
         }
-        self.lock_map = {}
         return state
       
     def restore_from_state(self, state):
@@ -217,6 +280,16 @@ class Table:
         self.__dict__.update(state)
         self.base_pages = []
         self.tail_pages = []
+        
+        # Initialize lock_map if it doesn't exist
+        if not hasattr(self, 'lock_map') or self.lock_map is None:
+            self.lock_map = {}
+        
+        # Recreate locks for all keys in the index
+        if hasattr(self, 'index') and hasattr(self.index, 'indices') and self.key in self.index.indices:
+            for key in self.index.indices[self.key]:
+                if key not in self.lock_map:
+                    self.lock_map[key] = ReadWriteLockNoWait()
 
 
     def merge(self):

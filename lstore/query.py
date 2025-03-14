@@ -43,23 +43,37 @@ class Query:
     # Returns False if insert fails for whatever reason
     """
     def insert(self, *columns):
+        #print(f"Inserting columns: {columns}")
         bid = self.table.bid_counter
         self.table.bid_counter += 2
 
         key_col = self.table.key
         if self.table.index.locate(key_col, columns[key_col]):
             return False
+        
         self.table.lock_map[columns[key_col]] = ReadWriteLockNoWait()
-        for index, value in enumerate(columns):
-            self.table.write_base_page(index, value)
+        
+        # Get current base page and record position
+        base_idx = self.table.num_base_pages - 1
+        base_pos = self.table.base_pages[base_idx].num_records
+        
+        # Write actual data columns with explicit positions
+        for col_idx, value in enumerate(columns):
+            # Ensure the page exists for this column
+            self.table.write_base_page(col_idx, value, base_idx, base_pos)
+        
+        # Write metadata columns with explicit positions
+        self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0, base_idx, base_pos)
+        self.table.write_base_page(RID_COLUMN, bid, base_idx, base_pos)
+        self.table.write_base_page(INDIRECTION_COLUMN, bid, base_idx, base_pos)  # point to itself first
+        self.table.write_base_page(TIMESTAMP_COLUMN, 0, base_idx, base_pos)
+        
+        # Update index and page directory
         self.table.index.indices[key_col][columns[key_col]] = [bid]
-
-        self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0)
-        self.table.write_base_page(RID_COLUMN, bid)
-        self.table.write_base_page(INDIRECTION_COLUMN, bid) # point to itself first
-        self.table.write_base_page(TIMESTAMP_COLUMN, 0)
-        self.table.page_directory[bid] = [self.table.num_base_pages - 1, self.table.base_pages[-1].num_records]  # Position in Base Page
-        self.table.base_pages[-1].num_records += 1
+        self.table.page_directory[bid] = [base_idx, base_pos]  # Position in Base Page
+        
+        # Only increment record count once, after all columns are written
+        self.table.base_pages[base_idx].num_records += 1
 
         return True
 
@@ -75,7 +89,6 @@ class Query:
     """
     def select(self, search_key, search_key_index, projected_columns_index):
         return self.select_version(search_key, search_key_index, projected_columns_index, 0)
-
     
     """
     # Read matching record with specified search key
@@ -100,6 +113,11 @@ class Query:
         for bid in bids:
             base_idx, base_pos = self.table.page_directory[bid]
             key = self.table.read_base_page(self.table.key, base_idx, base_pos)
+            
+            # Make sure this key has a lock
+            if key not in self.table.lock_map:
+                self.table.lock_map[key] = ReadWriteLockNoWait()
+                
             if not self.table.lock_map[key].try_acquire_read():
                 return False
             col = []
@@ -123,10 +141,8 @@ class Query:
                         continue
                     col.append(self.table.read_base_page(i, base_idx, base_pos))
             records.append(Record(rid, key, col))
-            self.table.lock_map[key].release_read()    
+            self.table.lock_map[key].release_read() 
         return records
-
-
     
     """
     # Update a record with specified key and columns
@@ -157,41 +173,58 @@ class Query:
 
         base_idx, base_pos = self.table.page_directory[bid]
         schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
-        #lock here:
+        
         if not self.table.lock_map[primary_key].try_acquire_write():
             return False
+            
+        # Create a new schema encoding for this update
+        new_schema = 0
+        
         if schema_encoding:
             tid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
             tail_idx, tail_pos = self.table.page_directory[tid]
+            
             for i, value in enumerate(columns):
-                if value == None:
+                if value is None:
+                    # If not updating this column, get latest value from tail record
                     value = self.table.read_tail_page(i, tail_idx, tail_pos)
                 else:
-                    schema_encoding = schema_encoding | 1 << i
-                    self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
+                    # Mark this column as updated in schema encoding
+                    new_schema |= (1 << i)
+                    
+                # Write the value (either from previous tail record or new update)
                 self.table.write_tail_page(i, value)
+                
         else:
             for i, value in enumerate(columns):
-                if value == None:
+                if value is None:
+                    # If not updating this column, get value from base record
                     value = self.table.read_base_page(i, base_idx, base_pos)
                 else:
-                    schema_encoding = schema_encoding | 1 << i
-                    self.table.write_base_page(SCHEMA_ENCODING_COLUMN, schema_encoding, base_idx, base_pos)
+                    # Mark this column as updated in schema encoding
+                    new_schema |= (1 << i)
+                    
+                # Write the value (either from base record or new update)
                 self.table.write_tail_page(i, value)
+                
+            # Update schema encoding in base record to indicate updates exist
+            self.table.write_base_page(SCHEMA_ENCODING_COLUMN, new_schema, base_idx, base_pos)
 
         tid = self.table.tid_counter
         self.table.write_tail_page(INDIRECTION_COLUMN, self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos))
         self.table.write_base_page(INDIRECTION_COLUMN, tid, base_idx, base_pos)
         self.table.write_tail_page(RID_COLUMN, tid)
         self.table.write_tail_page(TIMESTAMP_COLUMN, 0)
-        self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, 0)
+        
+        # Write the correct schema encoding
+        self.table.write_tail_page(SCHEMA_ENCODING_COLUMN, new_schema)
+        
         self.table.page_directory[tid] = [self.table.num_tail_pages - 1, self.table.tail_pages[-1].num_records]
         self.table.tid_counter += 2
         self.table.tail_pages[-1].num_records += 1
         self.table.updates += 1
         self.table.lock_map[primary_key].release_write()
         return True
-
     
     """
     :param start_range: int         # Start of the key range to aggregate 
