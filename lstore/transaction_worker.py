@@ -1,18 +1,21 @@
 from lstore.table import Table, Record
 from lstore.index import Index
-from threading import Thread
+import threading
 
 import queue
 
-class TransactionWorker(Thread):
+class TransactionWorker(threading.Thread):
 
     """
     # Creates a transaction worker object.
     """
-    def __init__(self, transactions = []):
+    def __init__(self, transactions = None):
         super().__init__()
         self.stats = []
-        self.transactions = transactions
+        if not transactions:
+            self.transactions = []
+        else:
+            self.transactions = transactions
         self.result = 0
     
     """
@@ -27,7 +30,7 @@ class TransactionWorker(Thread):
     """
     def run(self):
         # here you need to create a thread and call __run
-        self.thread = Thread(target=self.__run)
+        self.thread = threading.Thread(target=self.__run)
         self.thread.start()
 
     """
