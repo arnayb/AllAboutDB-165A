@@ -1,7 +1,7 @@
 from lstore.table import Table, Record
 from lstore.index import Index
 import threading
-
+from .config import (ABORTED, FAILED)
 import queue
 
 class TransactionWorker(threading.Thread):
@@ -41,8 +41,12 @@ class TransactionWorker(threading.Thread):
 
     def __run(self):
         for transaction in self.transactions:
-              self.stats.append(transaction.run())
+              return_val = transaction.run()
+              if return_val == ABORTED:
+                  self.transactions.append(transaction)
+              # self.stats.append(transaction.run())
+
 
         # stores the number of transactions that committed
-        self.result = len(list(filter(lambda x: x, self.stats)))
+        # self.result = len(list(filter(lambda x: x, self.stats)))
 

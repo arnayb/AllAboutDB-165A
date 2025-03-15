@@ -1,7 +1,14 @@
-from lstore.table import Table, Record
+from lstore.table import Table, Record, ReadWriteLockNoWait
 from lstore.index import Index
 from .query import Query
 import threading
+
+from .config import (
+    ABORTED,
+    FAILED,
+    HELD,
+    NOT_HELD
+)
 
 class Transaction:
 
@@ -10,6 +17,7 @@ class Transaction:
     """
     def __init__(self):
         self.queries = []
+        self.pk_state = {}
         self.rollback_data = [] #storing data for rollback
 
     """
@@ -21,16 +29,29 @@ class Transaction:
     """
     def add_query(self, query, table, *args):
         self.queries.append((query, table, args))
-       
 
     # If you choose to implement this differently this method must still return True if transaction commits or False on abort
     def run(self):
-
         self.rollback_data.clear()
         
+        for query, table, args in enumerate(self.queries):
+            if query.__name__ == 'delete':
+                primary_key = args[0]
+                if (not table.index.indices[table.key].locate(table.key, primary_key) 
+                    and not (primary_key in self.pk_state and self.pk_state[primary_key] == HELD)):
+                    return FAILED
+                
+                if primary_key not in self.table.lock_map:
+                    self.table.lock_map[primary_key] = ReadWriteLockNoWait()
+                
+                if not self.table.lock_map[primary_key].try_acquire_write():
+                    return ABORTED
+
+
         for i, [query, table, args] in enumerate(self.queries):
+            
             if (query.__name__ == 'delete'):
-                primary_key = args[0]  
+                primary_key = args[0]
                 # storing the original data for rollback
                 bid = table.index.locate(table.key, primary_key)
                 self.rollback_data.append((table, primary_key, bid))
