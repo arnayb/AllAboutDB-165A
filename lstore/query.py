@@ -7,6 +7,7 @@ from .config import (
     MAX_VERSIONS
 )
 from time import time
+import threading
 
 class Query:
     """
@@ -17,6 +18,7 @@ class Query:
     """
     def __init__(self, table):
         self.table = table
+        self.lock = threading.Lock()
 
     """
     # internal Method
@@ -44,9 +46,6 @@ class Query:
     """
     def insert(self, *columns):
         #print(f"Inserting columns: {columns}")
-        bid = self.table.bid_counter
-        self.table.bid_counter += 2
-
         if self.table.should_merge():
             self.table.merge()
 
@@ -56,29 +55,39 @@ class Query:
         
         self.table.lock_map[columns[key_col]] = ReadWriteLockNoWait()
         
-        # Get current base page and record position
-        base_idx = self.table.num_base_pages - 1
-        base_pos = self.table.base_pages[base_idx].num_records
+        # if not self.table.lock_map[columns[key_col]].try_acquire_write():
+            # return False
         
-        # Write actual data columns with explicit positions
-        for col_idx, value in enumerate(columns):
-            # Ensure the page exists for this column
-            self.table.write_base_page(col_idx, value, base_idx, base_pos)
-        
-        # Write metadata columns with explicit positions
-        self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0, base_idx, base_pos)
-        self.table.write_base_page(RID_COLUMN, bid, base_idx, base_pos)
-        self.table.write_base_page(INDIRECTION_COLUMN, bid, base_idx, base_pos)  # point to itself first
-        self.table.write_base_page(TIMESTAMP_COLUMN, 0, base_idx, base_pos)
-        
-        # Update index and page directory
-        self.table.index.indices[key_col][columns[key_col]] = [bid]
-        self.table.page_directory[bid] = [base_idx, base_pos]  # Position in Base Page
-        
-        # Only increment record count once, after all columns are written
-        self.table.base_pages[base_idx].num_records += 1
+        with self.lock:
+        # try:
+            # Get current base page and record position
+            base_idx = self.table.num_base_pages - 1
+            base_pos = self.table.base_pages[base_idx].num_records
+            
+            # Write actual data columns with explicit positions
+            for col_idx, value in enumerate(columns):
+                # Ensure the page exists for this column
+                self.table.write_base_page(col_idx, value, base_idx, base_pos)
+            
+            bid = self.table.bid_counter
+            self.table.bid_counter += 2
 
-        return True
+            # Write metadata columns with explicit positions
+            self.table.write_base_page(SCHEMA_ENCODING_COLUMN, 0, base_idx, base_pos)
+            self.table.write_base_page(RID_COLUMN, bid, base_idx, base_pos)
+            self.table.write_base_page(INDIRECTION_COLUMN, bid, base_idx, base_pos)  # point to itself first
+            self.table.write_base_page(TIMESTAMP_COLUMN, 0, base_idx, base_pos)
+            
+            # Update index and page directory
+            self.table.index.indices[key_col][columns[key_col]] = [bid]
+            self.table.page_directory[bid] = [base_idx, base_pos]  # Position in Base Page
+            
+            # Only increment record count once, after all columns are written
+            self.table.base_pages[base_idx].num_records += 1
+
+            return True
+        # finally:
+        #     self.table.lock_map[columns[key_col]].release_write()
 
     
     """
