@@ -210,7 +210,7 @@ class Database():
                 num_records = len(page_data) // 8  # Assuming 8-byte records
             
             page = Page()
-            page.data = page_data
+            page.data = bytearray(page_data)
             page.num_records = num_records
             page.is_dirty = False  # Reset dirty flag for loaded pages
             

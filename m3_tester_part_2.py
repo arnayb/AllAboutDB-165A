@@ -4,6 +4,7 @@ from lstore.transaction import Transaction
 from lstore.transaction_worker import TransactionWorker
 
 from random import choice, randint, sample, seed
+from time import time
 
 db = Database()
 db.open('./ECS165')
@@ -62,6 +63,7 @@ for j in range(number_of_operations_per_record):
             transactions[key % number_of_transactions].add_query(query.update, grades_table, key, *updated_columns)
 print("Update finished")
 
+t = time()
 
 # add trasactions to transaction workers  
 for i in range(number_of_transactions):
@@ -92,5 +94,6 @@ for key in keys:
         print('Record Not found', key)
         score -= 1
 print('Score', score, '/', len(keys))
-
+t = time() - t
+print(t)
 db.close()

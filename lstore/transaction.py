@@ -38,7 +38,7 @@ class Transaction:
                 primary_key = args[0]  
                 # storing the original data for rollback
                 temp_query = Query(table)
-                old_record = temp_query.select(table.key, primary_key)
+                old_record = temp_query.select(primary_key, table.key, [1] * table.num_columns)
                 self.rollback_data.append((table, primary_key, old_record))
                 
 

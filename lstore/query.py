@@ -130,30 +130,31 @@ class Query:
             if key not in self.table.lock_map:
                 self.table.lock_map[key] = ReadWriteLockNoWait()
                 
-            if not self.table.lock_map[key].try_acquire_read():
-                return False
-            col = []
-            rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
-            
-            # backtrack until the rid = bid or reached wanted version
-            while rid & 1 and relative_version < 0:
-                relative_version += 1
-                tail_idx, tail_pos = self.table.page_directory[rid]
-                rid = self.table.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+            # if not self.table.lock_map[key].try_acquire_read():
+            #     return False
+            with self.lock:
+                col = []
+                rid = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
                 
-            if rid & 1:
-                tail_idx, tail_pos = self.table.page_directory[rid]
-                for i in range(self.table.num_columns):
-                    if projected_columns_index[i] != 1:
-                        continue
-                    col.append(self.table.read_tail_page(i, tail_idx, tail_pos))
-            else:
-                for i in range(self.table.num_columns):
-                    if projected_columns_index[i] != 1:
-                        continue
-                    col.append(self.table.read_base_page(i, base_idx, base_pos))
-            records.append(Record(rid, key, col))
-            self.table.lock_map[key].release_read() 
+                # backtrack until the rid = bid or reached wanted version
+                while rid & 1 and relative_version < 0:
+                    relative_version += 1
+                    tail_idx, tail_pos = self.table.page_directory[rid]
+                    rid = self.table.read_tail_page(INDIRECTION_COLUMN, tail_idx, tail_pos)
+                    
+                if rid & 1:
+                    tail_idx, tail_pos = self.table.page_directory[rid]
+                    for i in range(self.table.num_columns):
+                        if projected_columns_index[i] != 1:
+                            continue
+                        col.append(self.table.read_tail_page(i, tail_idx, tail_pos))
+                else:
+                    for i in range(self.table.num_columns):
+                        if projected_columns_index[i] != 1:
+                            continue
+                        col.append(self.table.read_base_page(i, base_idx, base_pos))
+                records.append(Record(rid, key, col))
+                # self.table.lock_map[key].release_read() 
         return records
     
     """
@@ -195,10 +196,11 @@ class Query:
             self.table.lock_map[primary_key] = ReadWriteLockNoWait()
         
         # Try to acquire write lock with minimal blocking time
-        if not self.table.lock_map[primary_key].try_acquire_write():
-            return False
+        # if not self.table.lock_map[primary_key].try_acquire_write():
+        #     return False
         
-        try:
+        with self.lock:
+        # try:
             # Batch read metadata
             schema_encoding = self.table.read_base_page(SCHEMA_ENCODING_COLUMN, base_idx, base_pos)
             indirection = self.table.read_base_page(INDIRECTION_COLUMN, base_idx, base_pos)
@@ -300,9 +302,9 @@ class Query:
                     self.table.lock_map[new_primary_key] = ReadWriteLockNoWait()
             
             return True
-        finally:
-            # Always release the lock
-            self.table.lock_map[primary_key].release_write()
+        # finally:
+        #     # Always release the lock
+        #     self.table.lock_map[primary_key].release_write()
 
     # Add this helper method to the Query class
     def _batch_write_tail_record(self, tid, indirection, timestamp, schema, 
